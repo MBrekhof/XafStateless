@@ -1,0 +1,34 @@
+@using Microsoft.JSInterop
+
+<div class="xafstateless-diagram-root">
+    <div class="xafstateless-diagram" @ref="container"></div>
+    @if (Messages.Count > 0)
+    {
+        <ul class="xafstateless-diagram-messages" style="color:#b00020;">
+            @foreach (var message in Messages)
+            {
+                <li>@message</li>
+            }
+        </ul>
+    }
+</div>
+
+@code {
+    [Parameter] public string MermaidText { get; set; } = "";
+    [Parameter] public IReadOnlyList<string> Messages { get; set; } = [];
+    [Inject] IJSRuntime JS { get; set; } = default!;
+
+    ElementReference container;
+    string rendered = "";
+
+    // Re-renders only when the text actually changed (Save/Publish re-fires this via a fresh Committed-triggered value,
+    // but most re-renders of the surrounding page do not change MermaidText).
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (MermaidText != rendered)
+        {
+            rendered = MermaidText;
+            await JS.InvokeVoidAsync("diagram.render", container, MermaidText);
+        }
+    }
+}

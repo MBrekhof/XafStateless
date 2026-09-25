@@ -9,6 +9,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Model.DesignedDiffs.xafml" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\XafStateless.Module\XafStateless.Module.csproj" />
   </ItemGroup>
 

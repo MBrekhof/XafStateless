@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application>
+  <Views>
+    <DetailView Id="WorkflowDefinition_DetailView">
+      <Items>
+        <DiagramViewItem Id="Diagram" IsNewNode="True" />
+      </Items>
+      <Layout>
+        <LayoutGroup Id="Main">
+          <LayoutItem Id="Diagram" ViewItem="Diagram" ShowCaption="False" Index="100" IsNewNode="True" />
+        </LayoutGroup>
+      </Layout>
+    </DetailView>
+  </Views>
+</Application>
