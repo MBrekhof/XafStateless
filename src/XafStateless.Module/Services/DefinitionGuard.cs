@@ -14,6 +14,7 @@ namespace XafStateless.Module.Services;
 /// is persisted as Draft, and each such write Touches the definition, so a Publish racing a draft edit collides on the
 /// definition row. State changes happen only inside <see cref="AllowPublishing"/>, for the ids it names:
 /// Draft -> Published for <c>publish</c>, Published -> Retired for <c>retire</c>.
+/// Workflow tasks are runtime-written: see <see cref="CheckTasks"/>.
 /// "Persisted" is read from the database with raw SQL (<see cref="RawSql"/>: same connection and transaction, never
 /// rewritten by XAF security, one query per entity type per save), never from the change tracker's original values,
 /// which an attached entity can fake.
@@ -74,9 +75,11 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         ctx.ChangeTracker.DetectChanges();
         var instances = ctx.ChangeTracker.Entries<WorkflowInstance>().Where(e => e.State == EntityState.Modified).ToList();
         var (states, transitions, effects, definitions) = (Changed<WorkflowState>(ctx), Changed<WorkflowTransition>(ctx), Changed<WorkflowEffect>(ctx), Changed<WorkflowDefinition>(ctx));
-        if (instances.Count + states.Count + transitions.Count + effects.Count + definitions.Count == 0) return;
+        var tasks = Changed<WorkflowTask>(ctx);
+        if (instances.Count + states.Count + transitions.Count + effects.Count + definitions.Count + tasks.Count == 0) return;
 
         CheckInstances(ctx, instances);
+        CheckTasks(ctx, tasks);
 
         // Persisted parents, one query per type. An effect's owner goes through its state, so effects are read first.
         var effectParents = PersistedParents<WorkflowEffect>(ctx, Existing(effects), nameof(WorkflowEffect.State));
@@ -175,6 +178,46 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
                     throw Refuse("a workflow instance's definition and subject are fixed once set.");
         }
     }
+
+    static UserFriendlyException RefuseTask(string message) => new($"Workflow task: {message}");
+
+    static readonly string[] TaskRuntimeColumns =
+        [nameof(WorkflowTask.State), nameof(WorkflowTask.DecidedBy), nameof(WorkflowTask.Outcome), nameof(WorkflowTask.DecidedUtc)];
+
+    /// <summary>Tasks are written by the runtime only: inserts, and changes to State/DecidedBy/Outcome/DecidedUtc, only inside a
+    /// <see cref="RuntimeScope"/>. Instance, StateKey, Role and Subject are fixed after insert, even inside the scope; tasks are
+    /// never deleted (hard or soft). Judged against the database rows (one query), never the change tracker's original values.</summary>
+    static void CheckTasks(DbContext ctx, List<EntityEntry<WorkflowTask>> tasks)
+    {
+        if (tasks.Count == 0) return;
+        var inScope = RuntimeScope.Current != null;
+        if (tasks.Any(e => e.State == EntityState.Deleted)) throw RefuseTask("a task cannot be deleted.");
+        if (!inScope && tasks.Any(e => e.State == EntityState.Added)) throw RefuseTask("tasks are created by the workflow runtime only.");
+        var modified = tasks.Where(e => e.State == EntityState.Modified).ToList();
+        if (modified.Count == 0) return;
+
+        var fk = RawSql.ForeignKey<WorkflowTask>(ctx, nameof(WorkflowTask.Instance));
+        string[] fixedColumns = [fk, nameof(WorkflowTask.StateKey), nameof(WorkflowTask.Role), nameof(WorkflowTask.Subject), GCRecord];
+        var rows = RawSql.Rows<WorkflowTask>(ctx, Id, modified.Select(e => e.Entity.ID), [Id, .. fixedColumns, .. TaskRuntimeColumns])
+            .ToDictionary(r => (Guid)r[0]!);
+        foreach (var e in modified)
+        {
+            if (!rows.TryGetValue(e.Entity.ID, out var row)) throw RefuseTask("the task does not exist.");
+            object? Now(string column) => column == fk
+                ? (e.Reference(nameof(WorkflowTask.Instance)).CurrentValue as BaseObject)?.ID ?? (Guid?)e.Property(fk).CurrentValue
+                : e.Property(column).CurrentValue;
+            for (var i = 0; i < fixedColumns.Length; i++)
+                if (!Same(Now(fixedColumns[i]), row[1 + i]))
+                    throw RefuseTask("a task's instance, state, role and subject are fixed once created, and a task cannot be deleted.");
+            if (inScope) continue;
+            for (var i = 0; i < TaskRuntimeColumns.Length; i++)
+                if (!Same(Now(TaskRuntimeColumns[i]), row[1 + fixedColumns.Length + i]))
+                    throw RefuseTask("only the workflow runtime decides a task.");
+        }
+    }
+
+    /// <summary>A tracked value against its raw-read column: enums compare by their stored int.</summary>
+    static bool Same(object? current, object? stored) => Equals(current is Enum ? Convert.ToInt32(current) : current, stored);
 
     /// <summary>id -> parent id as stored (null: no parent). Rows missing from the result do not exist (or are soft-deleted).</summary>
     static Dictionary<Guid, Guid?> PersistedParents<T>(DbContext ctx, IEnumerable<Guid> ids, string navigation) where T : BaseObject =>

@@ -16,6 +16,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="XafStateless.Module.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\XafStateless.Engine\XafStateless.Engine.csproj" />
   </ItemGroup>
 

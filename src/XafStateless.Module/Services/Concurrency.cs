@@ -36,3 +36,28 @@ public static class Concurrency
         version.IsModified = true;
     }
 }
+
+/// <summary>
+/// The runtime's write permit: open while a command runs its machine AND commits (guards run in SavingChanges), one per
+/// attempt. Guards ask <see cref="Current"/>. Modelled on DefinitionGuard.AllowPublishing: an AsyncLocal holding the scope,
+/// and disposal revokes it everywhere, including in an execution context captured inside it. Internal: only the runtime opens it.
+/// </summary>
+internal sealed class RuntimeScope : IDisposable
+{
+    static readonly AsyncLocal<RuntimeScope?> current = new();
+    readonly RuntimeScope? previous;
+    volatile bool disposed;
+
+    RuntimeScope(RuntimeScope? previous) => this.previous = previous;
+
+    /// <summary>The open scope of this flow, or null (none, or disposed).</summary>
+    public static RuntimeScope? Current => current.Value is { disposed: false } s ? s : null;
+
+    public static RuntimeScope Open() => current.Value = new RuntimeScope(current.Value);
+
+    public void Dispose()
+    {
+        disposed = true;
+        current.Value = previous;
+    }
+}

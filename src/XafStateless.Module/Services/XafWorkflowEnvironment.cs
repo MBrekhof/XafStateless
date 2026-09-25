@@ -61,5 +61,5 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
         return Convert.ChangeType(value, t, c);
     }
 
-    [GeneratedRegex(@"\{([^{}]+)\}")] private static partial Regex Placeholder();
+    [GeneratedRegex(@"\{([^{}]+)\}")] internal static partial Regex Placeholder();
 }

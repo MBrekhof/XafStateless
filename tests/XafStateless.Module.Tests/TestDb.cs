@@ -3,7 +3,9 @@ using DevExpress.ExpressApp.EFCore;
 using DevExpress.ExpressApp.EFCore.DataLocking;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using XafStateless.Demo.Module.BusinessObjects;
+using XafStateless.Module.Services;
 
 namespace XafStateless.Module.Tests;
 
@@ -34,6 +36,20 @@ public sealed class TestDb : IDisposable
     }
 
     public IObjectSpace NewObjectSpace() => provider.CreateObjectSpace();
+
+    /// <summary>A second provider on the same database, with extra interceptors; <paramref name="maxBatchSize1"/> makes every
+    /// DML statement its own DbCommand. The caller disposes it.</summary>
+    public EFCoreObjectSpaceProvider<DemoEFCoreDbContext> NewProvider(bool maxBatchSize1 = false, params IInterceptor[] extra) =>
+        new((builder, _) =>
+        {
+            builder.UseConnectionString(ConnectionString);
+            if (maxBatchSize1) builder.UseSqlServer(ConnectionString, o => o.MaxBatchSize(1));
+            builder.AddInterceptors(new EFCoreOptimisticLockInterceptor());
+            builder.AddInterceptors(extra);
+        });
+
+    /// <summary>A caller whose Secured and command spaces are both plain (non-secured) object spaces; security is Task 7's.</summary>
+    public WorkflowCaller Caller(string name, params string[] roles) => new(name, roles.Contains, NewObjectSpace(), NewObjectSpace);
 
     public DemoEFCoreDbContext NewDbContext()
     {

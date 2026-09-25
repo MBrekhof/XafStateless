@@ -12,6 +12,7 @@ public static class ServiceCollectionExtensions
     {
         s.AddSingleton<DefinitionStore>();
         s.AddSingleton<DefinitionService>();
+        s.AddSingleton<WorkflowRuntime>();
         s.TryAddSingleton(TimeProvider.System);
         return s;
     }

@@ -29,6 +29,8 @@ public class Startup {
         services.AddHttpContextAccessor();
         services.AddScoped<CircuitHandler, CircuitHandlerProxy>();
         services.AddXafStateless();
+        services.AddHostedService<WorkflowTimerService>();
+        services.AddHostedService<LogNotificationDispatcher>();
         services.AddXaf(Configuration, builder => {
             builder.UseApplication<DemoBlazorApplication>();
             builder.Modules
