@@ -1,5 +1,6 @@
 using DevExpress.ExpressApp;
 using DevExpress.Persistent.BaseImpl.EF.PermissionPolicy;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using XafStateless.Demo.Module.BusinessObjects;
 using XafStateless.Engine;
@@ -112,7 +113,7 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
     {
         using var os = db.NewObjectSpace();
         change(os, os.GetObjectByKey<WorkflowDefinition>(id));
-        using (publishing ? DefinitionGuard.AllowPublishing() : null)
+        using (publishing ? DefinitionGuard.AllowPublishing(id, id) : null)
             Guarded(() => os.CommitChanges());
     }
 
@@ -244,7 +245,7 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
             using var os = db.NewObjectSpace();
             var d = Draft(os, Unique());
             d.State = DefinitionState.Published;
-            using (publishing ? DefinitionGuard.AllowPublishing() : null)
+            using (publishing ? DefinitionGuard.AllowPublishing(d.ID, d.ID) : null)
                 Guarded(() => os.CommitChanges());
         }
     }
@@ -341,6 +342,176 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         var fake = new FakeClock();
         var withFake = new ServiceCollection().AddSingleton<TimeProvider>(fake).AddXafStateless().BuildServiceProvider();
         Assert.Same(fake, withFake.GetRequiredService<TimeProvider>());
+    }
+
+    // ---- Fix round 1 ----
+
+    Guid CommittedDraft()
+    {
+        using var os = db.NewObjectSpace();
+        var d = Draft(os, Unique());
+        os.CommitChanges();
+        return d.ID;
+    }
+
+    [Fact] public void Publish_refuses_pending_changes_to_other_definitions()
+    {
+        var (d, x) = (CommittedDraft(), CommittedDraft());
+        var y = PublishNew(Unique());
+        using (var os = db.NewObjectSpace())
+        {
+            os.GetObjectByKey<WorkflowDefinition>(x).State = DefinitionState.Published;    // unvalidated X rides along?
+            var r = svc.Publish(os, os.GetObjectByKey<WorkflowDefinition>(d), "tester", Roles());
+            Assert.False(r.Ok);
+            Assert.Contains(r.Messages, m => m.Contains("Save or cancel"));
+        }
+        using (var os = db.NewObjectSpace())
+        {
+            os.GetObjectByKey<WorkflowDefinition>(y).State = DefinitionState.Retired;      // any published Y retired?
+            Assert.False(svc.Publish(os, os.GetObjectByKey<WorkflowDefinition>(d), "tester", Roles()).Ok);
+        }
+        Assert.Equal((DefinitionState.Draft, DefinitionState.Draft, DefinitionState.Published), (StateOf(d), StateOf(x), StateOf(y)));
+    }
+
+    [Fact] public void Publishing_scope_covers_only_its_own_ids()
+    {
+        var (d, x) = (CommittedDraft(), CommittedDraft());
+        var y = PublishNew(Unique());
+        var retire = PublishNew(Unique());
+        using (var os = db.NewObjectSpace())
+        {
+            os.GetObjectByKey<WorkflowDefinition>(x).State = DefinitionState.Published;
+            using (DefinitionGuard.AllowPublishing(d, retire)) Guarded(() => os.CommitChanges());
+        }
+        using (var os = db.NewObjectSpace())
+        {
+            os.GetObjectByKey<WorkflowDefinition>(y).State = DefinitionState.Retired;
+            using (DefinitionGuard.AllowPublishing(d, retire)) Guarded(() => os.CommitChanges());
+        }
+        using (var os = db.NewObjectSpace())
+        {
+            os.GetObjectByKey<WorkflowDefinition>(y).State = DefinitionState.Retired;     // publish id is not a retire permit
+            using (DefinitionGuard.AllowPublishing(y, null)) Guarded(() => os.CommitChanges());
+        }
+        Assert.Equal((DefinitionState.Draft, DefinitionState.Published), (StateOf(x), StateOf(y)));
+    }
+
+    [Fact] public void Publishing_scope_captured_after_dispose_is_refused()
+    {
+        var d = CommittedDraft();
+        using var os = db.NewObjectSpace();
+        os.GetObjectByKey<WorkflowDefinition>(d).State = DefinitionState.Published;
+        ExecutionContext captured;
+        using (DefinitionGuard.AllowPublishing(d, null)) captured = ExecutionContext.Capture()!;   // e.g. a task started inside the scope
+        ExecutionContext.Run(captured, _ => Guarded(() => os.CommitChanges()), null);
+        Assert.Equal(DefinitionState.Draft, StateOf(d));
+    }
+
+    /// <summary>An untracked definition attached with fake original values (State = Draft) over a Published row.</summary>
+    static WorkflowDefinition AttachFakeDraft(DemoEFCoreDbContext ctx, Guid id, int version)
+    {
+        var fake = ctx.CreateProxy<WorkflowDefinition>();
+        (fake.ID, fake.Name, fake.Version, fake.State, fake.OptimisticLockField) = (id, "fake", 1, DefinitionState.Draft, version);
+        ctx.Attach(fake);
+        return fake;
+    }
+
+    [Fact] public void Attached_definition_with_fake_draft_original_is_refused()
+    {
+        var id = PublishNew(Unique());
+        using (var ctx = db.NewDbContext())
+        {
+            AttachFakeDraft(ctx, id, LockVersion(id)).InitialStateKey = "review";
+            Guarded(() => ctx.SaveChanges());
+        }
+        using (var ctx = db.NewDbContext())
+        {
+            AttachFakeDraft(ctx, id, LockVersion(id));
+            ctx.WorkflowTransitions.First(t => EF.Property<Guid?>(t, "DefinitionID") == id).Trigger = "hacked";
+            Guarded(() => ctx.SaveChanges());
+        }
+        using var check = db.NewObjectSpace();
+        var d = check.GetObjectByKey<WorkflowDefinition>(id);
+        Assert.Equal(("draft", DefinitionState.Published), (d.InitialStateKey, d.State));
+        Assert.DoesNotContain(d.Transitions, t => t.Trigger == "hacked");
+    }
+
+    [Fact] public void Attached_instance_with_fake_original_is_refused()
+    {
+        var (d1, d2) = (CommittedDraft(), CommittedDraft());
+        Guid instanceId;
+        using (var os = db.NewObjectSpace())
+        {
+            var i = os.CreateObject<WorkflowInstance>();
+            (i.Definition, i.SubjectType, i.SubjectId) = (os.GetObjectByKey<WorkflowDefinition>(d1), "T", Guid.NewGuid());
+            os.CommitChanges();
+            instanceId = i.ID;
+        }
+        using var ctx = db.NewDbContext();
+        var fake = ctx.CreateProxy<WorkflowInstance>();
+        fake.ID = instanceId;
+        ctx.Attach(fake);                                    // originals: no definition, no subject ("unset")
+        ctx.Entry(fake).Property("DefinitionID").CurrentValue = d2;
+        Guarded(() => ctx.SaveChanges());
+    }
+
+    [Fact] public void GCRecord_marked_but_unchanged_is_not_a_deletion()
+    {
+        var d = CommittedDraft();
+        using var os = db.NewObjectSpace();
+        var def = os.GetObjectByKey<WorkflowDefinition>(d);
+        def.State = DefinitionState.Published;
+        ((DevExpress.ExpressApp.EFCore.EFCoreObjectSpace)os).DbContext.Entry(def).Property("GCRecord").IsModified = true;
+        Guarded(() => os.CommitChanges());
+        Assert.Equal(DefinitionState.Draft, StateOf(d));
+    }
+
+    [Fact] public void Store_does_not_cache_inside_a_transaction()
+    {
+        var store = new DefinitionStore();
+        var d = CommittedDraft();
+        using (var os = db.NewObjectSpace())
+        {
+            var ef = (DevExpress.ExpressApp.EFCore.EFCoreObjectSpace)os;
+            using var tx = ef.DbContext.Database.BeginTransaction();
+            using (DefinitionGuard.AllowPublishing(d, null))
+            {
+                os.GetObjectByKey<WorkflowDefinition>(d).State = DefinitionState.Published;
+                os.CommitChanges();
+            }
+            Assert.Contains(store.Get(os, d).Transitions, t => t.Trigger == "reject");
+            tx.Rollback();                                   // never published after all
+        }
+        using (var os = db.NewObjectSpace())               // still a draft: edit it
+        {
+            os.GetObjectByKey<WorkflowDefinition>(d).Transitions.Single(t => t.Trigger == "reject").Trigger = "decline";
+            os.CommitChanges();
+        }
+        using (var os = db.NewObjectSpace())
+            Assert.Contains(store.Get(os, d).Transitions, t => t.Trigger == "decline");
+    }
+
+    [Fact] public void Allow_list_pins()
+    {
+        var draft = CommittedDraft();
+        var published = PublishNew(Unique());
+        Refused(draft, (_, d) => d.State = DefinitionState.Published);                    // Draft->Published outside the scope
+        Refused(draft, (_, d) => d.PublishedBy = "someone");                              // PublishedBy on a draft
+        Refused(published, (_, d) => d.State = DefinitionState.Retired);                  // Published->Retired outside the scope
+        Refused(published, (_, d) => (d.State, d.InitialStateKey) = (DefinitionState.Retired, "review"), publishing: true);   // retire + header change
+        Refused(published, (os, d) => os.Delete(d));                                      // delete a Published definition
+        Assert.Equal((DefinitionState.Draft, DefinitionState.Published), (StateOf(draft), StateOf(published)));
+    }
+
+    [Fact] public void Null_effect_value_is_a_message_not_an_exception()
+    {
+        using var os = db.NewObjectSpace();
+        var d = Draft(os, Unique());
+        var ordered = d.States.Single(s => s.Key == "ordered");
+        foreach (var e in ordered.Effects) e.Value = null!;
+        var r = svc.Validate(os, d, Roles());
+        Assert.False(r.Ok);
+        Assert.Equal(2, r.Messages.Count(m => m.StartsWith("effect on 'ordered':")));
     }
 
     sealed class FakeClock : TimeProvider;

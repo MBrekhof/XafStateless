@@ -25,6 +25,8 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
 
     public string? CheckEffect(EffectDef effect)
     {
+        if (effect.Value is null)   // a nulled column; the record's type says non-null, the database does not
+            return effect.Kind == EffectKind.SetField ? $"'{effect.Target}' needs a value" : "a notification needs a text";
         switch (effect.Kind)
         {
             case EffectKind.SetField:

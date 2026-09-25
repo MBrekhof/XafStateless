@@ -10,6 +10,7 @@ public sealed record DefinitionResult(bool Ok, IReadOnlyList<string> Messages);
 /// <summary>The definition lifecycle: new draft, validate, publish, dry run. DefinitionGuard enforces immutability underneath.</summary>
 public sealed class DefinitionService(DefinitionStore store)
 {
+    public const string PendingChangesMessage = "Save or cancel your pending changes before publishing.";
     public const string LostRaceMessage = "The definition changed meanwhile (another edit or publish committed first). Reload it and publish again.";
 
     /// <summary>A Draft v(max+1): a deep copy of the Published version, or empty when none is published. Not committed.</summary>
@@ -60,6 +61,9 @@ public sealed class DefinitionService(DefinitionStore store)
     /// loaded advanced its lock version (DefinitionGuard's Touch), so the publish loses the race instead of publishing unvalidated rules.</summary>
     public DefinitionResult Publish(IObjectSpace os, WorkflowDefinition d, string caller, IReadOnlyList<string> roleNames)
     {
+        // Publish commits the object space: anything else pending would ride along inside the permit, and a failed
+        // publish refreshes the object space. So the caller saves (or cancels) first.
+        if (os.IsModified) return new(false, [PendingChangesMessage]);
         if (d.State != DefinitionState.Draft) return new(false, [$"'{d.Name}' v{d.Version} is {d.State}; only a draft can be published."]);
         var check = Validate(os, d, roleNames);
         if (!check.Ok) return check;
@@ -67,10 +71,10 @@ public sealed class DefinitionService(DefinitionStore store)
         try
         {
             using var tx = db.Database.BeginTransaction();
-            using (DefinitionGuard.AllowPublishing())
+            var old = os.GetObjectsQuery<WorkflowDefinition>().FirstOrDefault(x => x.Name == d.Name && x.State == DefinitionState.Published);
+            using (DefinitionGuard.AllowPublishing(d.ID, old?.ID))
             {
-                foreach (var old in os.GetObjectsQuery<WorkflowDefinition>().Where(x => x.Name == d.Name && x.State == DefinitionState.Published).ToList())
-                    old.State = DefinitionState.Retired;
+                if (old != null) old.State = DefinitionState.Retired;
                 os.CommitChanges();
                 (d.State, d.PublishedBy, d.PublishedUtc) = (DefinitionState.Published, caller, DateTime.UtcNow);
                 os.CommitChanges();
@@ -79,7 +83,7 @@ public sealed class DefinitionService(DefinitionStore store)
         }
         catch (Exception ex) when (LostRace.Is(ex) || ex is UserFriendlyException)
         {
-            os.Refresh();   // the transaction rolled back: drop what the object space accepted inside it
+            os.Refresh();   // the transaction rolled back: drop what the object space accepted inside it (nothing else was pending)
             return new(false, [LostRace.Is(ex) ? LostRaceMessage : ex.Message]);
         }
         return new(true, [$"'{d.Name}' v{d.Version} published."]);
