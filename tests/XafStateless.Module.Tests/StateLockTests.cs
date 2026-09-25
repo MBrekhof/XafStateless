@@ -115,6 +115,55 @@ public class StateLockTests : IClassFixture<TestDb>
         Assert.Equal(50m, Saved(id).Amount);
     }
 
+    [Fact] public void Detached_update_cannot_write_locked_member()
+    {
+        // The disconnected-update pattern: ctx.Update marks every property Modified with original == current.
+        var id = Started(true, "Amount");
+        using (var ctx = db.NewDbContext())
+        {
+            var pr = ctx.PurchaseRequests.AsNoTracking().Include(x => x.Workflow).Single(x => x.ID == id);   // the link keeps its FK
+            pr.Amount = 999;
+            ctx.Update(pr);
+            ctx.Entry(pr.Workflow!).State = EntityState.Unchanged;   // Update walks the graph; only the subject is being updated
+            Assert.Equal(999m, ctx.Entry(pr).Property(x => x.Amount).OriginalValue);
+            AssertLocked(Record.Exception(() => ctx.SaveChanges()));
+        }
+        Assert.Equal(50m, Saved(id).Amount);
+    }
+
+    [Fact] public void Forged_original_value_cannot_write_locked_member()
+    {
+        var id = Started(true, "Amount");
+        using (var os = db.NewObjectSpace())
+        {
+            var pr = os.GetObjectByKey<PurchaseRequest>(id);
+            pr.Amount = 999;
+            var amount = ((EFCoreObjectSpace)os).DbContext.Entry(pr).Property(nameof(PurchaseRequest.Amount));
+            (amount.OriginalValue, amount.IsModified) = (999m, true);
+            AssertLocked(Record.Exception(() => os.CommitChanges()));
+        }
+        Assert.Equal(50m, Saved(id).Amount);
+    }
+
+    [Fact] public void Instance_delete_is_refused_outside_runtime()
+    {
+        // Deleting the instance would drop the subject's locks. Plain (admin-style, non-secured) spaces, soft and hard delete.
+        var id = Started(true, "Amount");
+        var instanceId = Saved(id).Workflow!.ID;
+        using (var os = db.NewObjectSpace())
+        {
+            os.Delete(os.GetObjectByKey<WorkflowInstance>(instanceId));
+            Assert.Contains("deleted by the workflow runtime only", Record.Exception(() => os.CommitChanges())!.Message);
+        }
+        using (var ctx = db.NewDbContext())
+        {
+            ctx.Remove(ctx.WorkflowInstances.Single(i => i.ID == instanceId));
+            Assert.Contains("deleted by the workflow runtime only", Record.Exception(() => ctx.SaveChanges())!.Message);
+        }
+        using (var check = db.NewObjectSpace()) Assert.NotNull(check.GetObjectByKey<WorkflowInstance>(instanceId));
+        Assert.Equal("approval", Saved(id).Workflow!.StateKey);
+    }
+
     [Fact] public void Unlocked_member_edit_is_allowed()
     {
         var id = Started(true, "Amount");
@@ -266,7 +315,10 @@ public class StateLockTests : IClassFixture<TestDb>
             mgr.MergeData(info);
             saves.Count = 0;
             a.CommitChanges();
-            Assert.True(saves.Count >= 1);
+            // Exactly 1, not the brief's ">= 2": the UI path merges BEFORE committing (ProcessDataLockingInfoController checks
+            // GetDataLockingInfo first, as reproduced here), so no failed first pass exists. The one pass is the merged save, and
+            // the locked half below proves the guard judges it against the new persisted state.
+            Assert.Equal(1, saves.Count);
         }
         Assert.Equal(777m, Saved(free).Amount);
 

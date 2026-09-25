@@ -24,13 +24,9 @@ public sealed class StateLockAppearanceController : ViewController<DetailView>
         base.OnActivated();
         store = Application.ServiceProvider.GetRequiredService<DefinitionStore>();
         appearance = Frame.GetController<AppearanceController>();
-        if (appearance != null)
-        {
-            appearance.ResetRulesCache();   // dxdocs 113374: reset, subscribe, refresh
-            appearance.CollectAppearanceRules += Appearance_CollectAppearanceRules;
-        }
+        if (appearance != null) appearance.CollectAppearanceRules += Appearance_CollectAppearanceRules;
         View.CurrentObjectChanged += View_CurrentObjectChanged;
-        Reapply();
+        Reapply();   // dxdocs 113374: subscribe, then reset the cache and refresh
     }
 
     protected override void OnDeactivated()

@@ -1,6 +1,7 @@
 using DevExpress.ExpressApp;
 using DevExpress.Persistent.BaseImpl.EF;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using XafStateless.Module.BusinessObjects;
 
@@ -79,21 +80,39 @@ public sealed class StateLockGuard : SaveChangesInterceptor
                 stateFk, nameof(WorkflowState.Key), nameof(WorkflowState.Caption), nameof(WorkflowState.LockedMembers))
             .ToDictionary(r => ((Guid)r[0]!, (string)r[1]!), r => (Caption: (string)r[2]!, Members: DefinitionMapper.Members((string?)r[3])));
 
+        // Each subject's locked, modified, non-exempt members. No live instance or state row means nothing is locked; instance
+        // deletes are refused outside the runtime (DefinitionGuard), so that happens only by writes that bypass EF.
+        var candidates = new List<(EntityEntry Entry, string Member, string Caption)>();
         foreach (var e in modified)
         {
             var subject = (IWorkflowSubject)e.Entity;
             if (!instances.TryGetValue(persistedLink[subject.ID]!.Value, out var instance) || instance.Definition is not { } def
                 || !locks.TryGetValue((def, instance.StateKey), out var state))
-                continue;   // no live instance or state row: nothing is locked
+                continue;
             foreach (var member in state.Members)
+                if (e.Metadata.FindProperty(member) != null && e.Property(member).IsModified && scope?.IsAllowed(subject.ID, member) != true)
+                    candidates.Add((e, member, state.Caption));
+        }
+        if (candidates.Count == 0) return;
+
+        // "Changed" is judged against the database, never OriginalValue: a disconnected ctx.Update or a forged OriginalValue
+        // makes original == current while the UPDATE still writes the column. One query per subject type, locked columns only.
+        foreach (var group in candidates.GroupBy(c => c.Entry.Metadata))
+        {
+            var columns = group.Select(c => c.Member).Distinct().ToList();
+            var stored = RawSql.Rows(ctx, group.Key.ClrType, Id, group.Select(c => ((IWorkflowSubject)c.Entry.Entity).ID), [Id, .. columns])
+                .ToDictionary(r => (Guid)r[0]!);
+            foreach (var (e, member, caption) in group)
             {
-                if (e.Metadata.FindProperty(member) is null) continue;
-                var p = e.Property(member);
-                if (!p.IsModified || Equals(p.OriginalValue, p.CurrentValue) || scope?.IsAllowed(subject.ID, member) == true) continue;
-                throw new UserFriendlyException($"'{member}' is locked in state '{state.Caption}'");
+                var row = stored.GetValueOrDefault(((IWorkflowSubject)e.Entity).ID);
+                if (row == null || !Same(e.Property(member).CurrentValue, row[1 + columns.IndexOf(member)]))
+                    throw new UserFriendlyException($"'{member}' is locked in state '{caption}'");
             }
         }
     }
+
+    /// <summary>A tracked value against its raw-read column: enums compare by their stored int.</summary>
+    static bool Same(object? current, object? stored) => Equals(current is Enum ? Convert.ToInt32(current) : current, stored);
 
     static string ForeignKey(Microsoft.EntityFrameworkCore.Metadata.IEntityType type) =>
         type.FindNavigation(Link)?.ForeignKey.Properties[0].Name

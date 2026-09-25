@@ -167,15 +167,19 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
 
     static UserFriendlyException RefuseInstance(string message) => new($"Workflow instance: {message}");
 
+    const string InstanceDeleted = "instances are deleted by the workflow runtime only.";
+
     static readonly string[] InstanceStateColumns =
         [nameof(WorkflowInstance.StateKey), nameof(WorkflowInstance.StateCaption), nameof(WorkflowInstance.EnteredUtc), nameof(WorkflowInstance.DueUtc)];
 
-    /// <summary>Instances are created by the runtime only (inside its scope). Definition, SubjectType and SubjectId are fixed once
-    /// set; StateKey, StateCaption, EnteredUtc and DueUtc change only inside the runtime scope, for every role, Administrators too.
+    /// <summary>Instances are created and deleted (hard, or soft through GCRecord) by the runtime only (inside its scope): a deleted
+    /// instance would drop its subject's state locks. Definition, SubjectType and SubjectId are fixed once set; StateKey,
+    /// StateCaption, EnteredUtc and DueUtc change only inside the runtime scope, for every role, Administrators too.
     /// Judged against the database rows (one query).</summary>
     static void CheckInstances(DbContext ctx, List<EntityEntry<WorkflowInstance>> instances, bool runtime)
     {
         if (!runtime && instances.Any(e => e.State == EntityState.Added)) throw RefuseInstance("instances are created by the workflow runtime only.");
+        if (!runtime && instances.Any(e => e.State == EntityState.Deleted)) throw RefuseInstance(InstanceDeleted);
         var modified = instances.Where(e => e.State == EntityState.Modified).ToList();
         if (modified.Count == 0) return;
         var fk = RawSql.ForeignKey<WorkflowInstance>(ctx, nameof(WorkflowInstance.Definition));
@@ -190,6 +194,8 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
                 if (!IsUnset(row[i + 1]) && !Equals(row[i + 1], now[i]))
                     throw Refuse("a workflow instance's definition and subject are fixed once set.");
             if (runtime) continue;
+            // The row was read live (RawSql skips GCRecord != 0), so any GCRecord set now is a soft delete.
+            if (e.Property(GCRecord).CurrentValue is int gc && gc != 0) throw RefuseInstance(InstanceDeleted);
             for (var i = 0; i < InstanceStateColumns.Length; i++)
                 if (!Same(e.Property(InstanceStateColumns[i]).CurrentValue, row[1 + now.Length + i]))
                     throw RefuseInstance("its state changes only through the workflow.");
