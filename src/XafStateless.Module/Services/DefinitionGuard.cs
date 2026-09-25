@@ -4,7 +4,6 @@ using DevExpress.Persistent.BaseImpl.EF;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.EntityFrameworkCore.Metadata;
 using XafStateless.Module.BusinessObjects;
 
 namespace XafStateless.Module.Services;
@@ -15,8 +14,9 @@ namespace XafStateless.Module.Services;
 /// is persisted as Draft, and each such write Touches the definition, so a Publish racing a draft edit collides on the
 /// definition row. State changes happen only inside <see cref="AllowPublishing"/>, for the ids it names:
 /// Draft -> Published for <c>publish</c>, Published -> Retired for <c>retire</c>.
-/// "Persisted" is read from the database (no-tracking, same context and connection, so inside the caller's transaction),
-/// never from the change tracker's original values, which an attached entity can fake.
+/// "Persisted" is read from the database with raw SQL (<see cref="RawSql"/>: same connection and transaction, never
+/// rewritten by XAF security, one query per entity type per save), never from the change tracker's original values,
+/// which an attached entity can fake.
 /// </summary>
 public sealed class DefinitionGuard : SaveChangesInterceptor
 {
@@ -58,31 +58,74 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
 
     static UserFriendlyException Refuse(string message) => new($"Workflow definition: {message}");
 
+    const string Id = nameof(BaseObject.ID);
     const string LockField = nameof(BaseObject.OptimisticLockField);
     const string GCRecord = EFCoreDeferredDeletionInterceptor.GCRecordFieldName;
+
+    static List<EntityEntry<T>> Changed<T>(DbContext ctx) where T : class =>
+        ctx.ChangeTracker.Entries<T>().Where(e => e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted).ToList();
+
+    static IEnumerable<Guid> Existing<T>(IEnumerable<EntityEntry<T>> entries) where T : BaseObject =>
+        entries.Where(e => e.State != EntityState.Added).Select(e => e.Entity.ID);
 
     static void Check(DbContext? ctx)
     {
         if (ctx == null) return;
         ctx.ChangeTracker.DetectChanges();
-        var changed = new[] { EntityState.Added, EntityState.Modified, EntityState.Deleted };
+        var instances = ctx.ChangeTracker.Entries<WorkflowInstance>().Where(e => e.State == EntityState.Modified).ToList();
+        var (states, transitions, effects, definitions) = (Changed<WorkflowState>(ctx), Changed<WorkflowTransition>(ctx), Changed<WorkflowEffect>(ctx), Changed<WorkflowDefinition>(ctx));
+        if (instances.Count + states.Count + transitions.Count + effects.Count + definitions.Count == 0) return;
 
-        foreach (var i in ctx.ChangeTracker.Entries<WorkflowInstance>().Where(e => e.State == EntityState.Modified).ToList())
-            CheckInstance(ctx, i);
+        CheckInstances(ctx, instances);
 
-        // Children first: their Touch makes the owning definition Modified, which the definition rule below then allows (Draft).
-        foreach (var e in ctx.ChangeTracker.Entries<WorkflowState>().Where(e => changed.Contains(e.State)).ToList())
-            CheckChild(ctx, Parent(ctx, e, nameof(WorkflowState.Definition)));
-        foreach (var e in ctx.ChangeTracker.Entries<WorkflowTransition>().Where(e => changed.Contains(e.State)).ToList())
-            CheckChild(ctx, Parent(ctx, e, nameof(WorkflowTransition.Definition)));
-        foreach (var e in ctx.ChangeTracker.Entries<WorkflowEffect>().Where(e => changed.Contains(e.State)).ToList())
-            CheckChild(ctx, Parent(ctx, e, nameof(WorkflowEffect.State)) is { } stateId ? StateOwner(ctx, stateId) : null);
+        // Persisted parents, one query per type. An effect's owner goes through its state, so effects are read first.
+        var effectParents = PersistedParents<WorkflowEffect>(ctx, Existing(effects), nameof(WorkflowEffect.State));
+        var effectStates = effects.Select(e => Parent(e, nameof(WorkflowEffect.State), effectParents)).ToList();
+        var trackedStates = ctx.ChangeTracker.Entries<WorkflowState>().ToDictionary(e => e.Entity.ID);
+        var stateParents = PersistedParents<WorkflowState>(ctx,
+            Existing(states).Concat(effectStates.OfType<Guid>().Where(id => !(trackedStates.TryGetValue(id, out var s) && s.State == EntityState.Added))),
+            nameof(WorkflowState.Definition));
+        var transitionParents = PersistedParents<WorkflowTransition>(ctx, Existing(transitions), nameof(WorkflowTransition.Definition));
 
-        foreach (var e in ctx.ChangeTracker.Entries<WorkflowDefinition>().Where(e => changed.Contains(e.State)).ToList())
-            CheckDefinition(ctx, e);
+        Guid? StateOwner(Guid? stateId) => stateId is not { } id ? null
+            : trackedStates.TryGetValue(id, out var s) ? Parent(s, nameof(WorkflowState.Definition), stateParents)
+            : stateParents.GetValueOrDefault(id);
+
+        var owners = states.Select(e => Parent(e, nameof(WorkflowState.Definition), stateParents))
+            .Concat(transitions.Select(e => Parent(e, nameof(WorkflowTransition.Definition), transitionParents)))
+            .Concat(effectStates.Select(StateOwner))
+            .ToList();
+        if (owners.Any(o => o == null)) throw Refuse("a state, effect or transition must belong to a definition.");
+
+        var trackedDefinitions = ctx.ChangeTracker.Entries<WorkflowDefinition>().ToDictionary(e => e.Entity.ID);
+        var existingOwners = owners.Select(o => o!.Value).Distinct()
+            .Where(id => !(trackedDefinitions.TryGetValue(id, out var d) && d.State == EntityState.Added)).ToList();   // a new owner: CheckDefinition requires Draft
+        // Track the owners not loaded yet (one query) so they can be Touched. Only their lock version is used, and it is
+        // compared against the raw read below, so a masked or stale value fails closed.
+        var untracked = existingOwners.Where(id => !trackedDefinitions.ContainsKey(id)).ToList();
+        if (untracked.Count > 0)
+            foreach (var d in ctx.Set<WorkflowDefinition>().Where(x => untracked.Contains(x.ID)).ToList())
+                trackedDefinitions[d.ID] = ctx.Entry(d);
+
+        var persisted = RawSql.Rows<WorkflowDefinition>(ctx, Id, existingOwners.Concat(Existing(definitions)), Id, nameof(WorkflowDefinition.State), LockField)
+            .ToDictionary(r => (Guid)r[0]!, r => (State: (DefinitionState)(int)r[1]!, Version: (int)r[2]!));
+
+        foreach (var id in existingOwners)
+        {
+            if (!persisted.TryGetValue(id, out var row)) throw Refuse("a state, effect or transition must belong to a definition.");
+            if (row.State != DefinitionState.Draft)
+                throw Refuse($"the definition is {row.State}; its states, effects and transitions cannot change. Create a new draft.");
+            if (!trackedDefinitions.TryGetValue(id, out var owner)) throw Refuse("the definition cannot be read.");
+            // Touch writes original+1 with the original in the UPDATE's WHERE: the original must be the version whose State we just read.
+            if ((int)owner.Property(LockField).OriginalValue! != row.Version)
+                throw new DbUpdateConcurrencyException("The workflow definition changed meanwhile.");
+            if (owner.State is EntityState.Unchanged or EntityState.Modified) Concurrency.Touch(owner);
+        }
+
+        foreach (var e in definitions) CheckDefinition(e, persisted);
     }
 
-    static void CheckDefinition(DbContext ctx, EntityEntry<WorkflowDefinition> e)
+    static void CheckDefinition(EntityEntry<WorkflowDefinition> e, Dictionary<Guid, (DefinitionState State, int Version)> persistedRows)
     {
         var (d, target) = (e.Entity, e.Entity.State);
         if (e.State == EntityState.Added)
@@ -90,7 +133,7 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
             if (target != DefinitionState.Draft) throw Refuse("a new definition starts as Draft; only Publish makes it Published.");
             return;
         }
-        var persisted = PersistedState(ctx, d.ID) ?? throw Refuse($"'{d.Name}' v{d.Version} does not exist.");
+        var persisted = persistedRows.TryGetValue(d.ID, out var row) ? row.State : throw Refuse($"'{d.Name}' v{d.Version} does not exist.");
         var modified = e.Properties.Where(p => p.IsModified && p.Metadata.Name != LockField).Select(p => p.Metadata.Name).ToList();
         // A deletion: EF Deleted, or XAF deferred deletion's Modified with GCRecord going from unset to set.
         // A GCRecord merely marked modified is not a deletion; the lifecycle rules below run for every entry regardless.
@@ -116,61 +159,38 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         }
     }
 
-    /// <summary>A state/effect/transition write: allowed only while the owning definition is persisted as Draft; Touches it.</summary>
-    static void CheckChild(DbContext ctx, Guid? definitionId)
+    /// <summary>Definition, SubjectType and SubjectId are fixed once set, judged against the database rows (one query).</summary>
+    static void CheckInstances(DbContext ctx, List<EntityEntry<WorkflowInstance>> instances)
     {
-        if (definitionId is not { } id) throw Refuse("a state, effect or transition must belong to a definition.");
-        var tracked = ctx.ChangeTracker.Entries<WorkflowDefinition>().FirstOrDefault(x => x.Entity.ID == id);
-        if (tracked?.State == EntityState.Added) return;   // a new definition: CheckDefinition requires it to be a Draft
-        var persisted = PersistedState(ctx, id) ?? throw Refuse("a state, effect or transition must belong to a definition.");
-        if (persisted != DefinitionState.Draft)
-            throw Refuse($"the definition is {persisted}; its states, effects and transitions cannot change. Create a new draft.");
-        var owner = tracked ?? (ctx.Find<WorkflowDefinition>(id) is { } d ? ctx.Entry(d) : null);
-        if (owner?.State is EntityState.Unchanged or EntityState.Modified) Concurrency.Touch(owner);
+        if (instances.Count == 0) return;
+        var fk = RawSql.ForeignKey<WorkflowInstance>(ctx, nameof(WorkflowInstance.Definition));
+        var rows = RawSql.Rows<WorkflowInstance>(ctx, Id, instances.Select(e => e.Entity.ID), Id, fk, nameof(WorkflowInstance.SubjectType), nameof(WorkflowInstance.SubjectId))
+            .ToDictionary(r => (Guid)r[0]!);
+        foreach (var e in instances)
+        {
+            if (!rows.TryGetValue(e.Entity.ID, out var row)) throw Refuse("the workflow instance does not exist.");
+            var now = new object?[] { (Guid?)e.Property(fk).CurrentValue, e.Entity.SubjectType, e.Entity.SubjectId };
+            for (var i = 0; i < now.Length; i++)
+                if (!IsUnset(row[i + 1]) && !Equals(row[i + 1], now[i]))
+                    throw Refuse("a workflow instance's definition and subject are fixed once set.");
+        }
     }
 
-    /// <summary>Definition, SubjectType and SubjectId are fixed once set, judged against the database row.</summary>
-    static void CheckInstance(DbContext ctx, EntityEntry<WorkflowInstance> e)
-    {
-        var fk = ForeignKey(e, nameof(WorkflowInstance.Definition)).Metadata.Name;
-        var row = ctx.Set<WorkflowInstance>().AsNoTracking().Where(x => x.ID == e.Entity.ID)
-            .Select(x => new { Definition = EF.Property<Guid?>(x, fk), x.SubjectType, x.SubjectId }).FirstOrDefault()
-            ?? throw Refuse("the workflow instance does not exist.");
-        var now = (Definition: (Guid?)e.Property(fk).CurrentValue, e.Entity.SubjectType, e.Entity.SubjectId);
-        if ((!IsUnset(row.Definition) && row.Definition != now.Definition)
-            || (!IsUnset(row.SubjectType) && row.SubjectType != now.SubjectType)
-            || (!IsUnset(row.SubjectId) && row.SubjectId != now.SubjectId))
-            throw Refuse("a workflow instance's definition and subject are fixed once set.");
-    }
+    /// <summary>id -> parent id as stored (null: no parent). Rows missing from the result do not exist (or are soft-deleted).</summary>
+    static Dictionary<Guid, Guid?> PersistedParents<T>(DbContext ctx, IEnumerable<Guid> ids, string navigation) where T : BaseObject =>
+        RawSql.Rows<T>(ctx, Id, ids, Id, RawSql.ForeignKey<T>(ctx, navigation)).ToDictionary(r => (Guid)r[0]!, r => (Guid?)r[1]);
 
-    /// <summary>An Added row's current parent; otherwise the parent as stored in the database. Re-parenting is refused.</summary>
-    static Guid? Parent<T>(DbContext ctx, EntityEntry<T> e, string navigation) where T : BaseObject
+    /// <summary>An Added row's current parent; otherwise the parent as stored. Re-parenting is refused.</summary>
+    static Guid? Parent<T>(EntityEntry<T> e, string navigation, Dictionary<Guid, Guid?> persisted) where T : BaseObject
     {
-        var fk = ForeignKey(e, navigation);
+        var fk = e.Property(((Microsoft.EntityFrameworkCore.Metadata.INavigation)e.Reference(navigation).Metadata).ForeignKey.Properties[0].Name);
         var current = (Guid?)fk.CurrentValue ?? (e.Reference(navigation).CurrentValue as BaseObject)?.ID;
         if (e.State == EntityState.Added) return current;
-        var persisted = PersistedParent<T>(ctx, e.Entity.ID, fk.Metadata.Name);
-        if (e.State == EntityState.Modified && current != persisted)
+        if (!persisted.TryGetValue(e.Entity.ID, out var stored)) throw Refuse("the row being changed does not exist.");
+        if (e.State == EntityState.Modified && current != stored)
             throw Refuse("a state, effect or transition cannot move to another parent.");
-        return persisted;
+        return stored;
     }
-
-    /// <summary>The definition an effect's state belongs to: tracked (Added = current, else persisted), or read from the database.</summary>
-    static Guid? StateOwner(DbContext ctx, Guid stateId) =>
-        ctx.ChangeTracker.Entries<WorkflowState>().FirstOrDefault(x => x.Entity.ID == stateId) is { } s
-            ? Parent(ctx, s, nameof(WorkflowState.Definition))
-            : PersistedParent<WorkflowState>(ctx, stateId,
-                ((INavigation)ctx.Model.FindEntityType(typeof(WorkflowState))!.FindNavigation(nameof(WorkflowState.Definition))!).ForeignKey.Properties[0].Name);
-
-    // ponytail: one query per changed row; batch by id if designers ever save hundreds of rows at once.
-    static DefinitionState? PersistedState(DbContext ctx, Guid id) =>
-        ctx.Set<WorkflowDefinition>().AsNoTracking().Where(x => x.ID == id).Select(x => (DefinitionState?)x.State).FirstOrDefault();
-
-    static Guid? PersistedParent<T>(DbContext ctx, Guid id, string fk) where T : BaseObject =>
-        ctx.Set<T>().AsNoTracking().Where(x => x.ID == id).Select(x => EF.Property<Guid?>(x, fk)).FirstOrDefault();
-
-    static PropertyEntry ForeignKey(EntityEntry e, string navigation) =>
-        e.Property(((INavigation)e.Reference(navigation).Metadata).ForeignKey.Properties[0].Name);
 
     static bool IsUnset(object? v) => v is null or "" || (v is Guid g && g == Guid.Empty);
 }
