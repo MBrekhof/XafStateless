@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Text.RegularExpressions;
 using DevExpress.ExpressApp;
+using DevExpress.ExpressApp.EFCore;
 using DevExpress.Persistent.BaseImpl.EF.PermissionPolicy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -175,9 +176,10 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
         Assert.Equal(("draft", "Draft", typeof(PurchaseRequest).FullName, id), (inst.StateKey, inst.StateCaption, inst.SubjectType, inst.SubjectId));
         Assert.Equal(clock.Now.UtcDateTime, inst.EnteredUtc);
         var again = rt.Start(Alice(), typeof(PurchaseRequest), id, name);
-        Assert.False(again.Ok);
-        var none = rt.Start(Alice(), typeof(PurchaseRequest), NewRequest(1), Unique());
-        Assert.False(none.Ok);
+        Assert.Equal((false, "the workflow has already started"), (again.Ok, again.Message));
+        var missing = Unique();
+        var none = rt.Start(Alice(), typeof(PurchaseRequest), NewRequest(1), missing);
+        Assert.Equal((false, $"'{missing}' has no published version"), (none.Ok, none.Message));
     }
 
     [Fact] public void Submit_creates_task_and_notification()
@@ -276,7 +278,7 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
         {
             using var os = db.NewObjectSpace();
             change(os, os.GetObjectByKey<WorkflowTask>(task));
-            using (inScope ? RuntimeScope.Open() : null)
+            using (inScope ? RuntimeScope.Open(Ctx(os)) : null)
                 Assert.StartsWith("Workflow task:", Assert.Throws<UserFriendlyException>(() => os.CommitChanges()).Message);
         }
 
@@ -291,6 +293,78 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
 
         var saved = Tasks(inst).Single(t => t.ID == task);
         Assert.Equal((inst, "approval", "Approvers", TaskState.Open, (string?)null), (saved.Instance!.ID, saved.StateKey, saved.Role, saved.State, saved.Outcome));
+    }
+
+    static DbContext Ctx(IObjectSpace os) => ((EFCoreObjectSpace)os).DbContext;
+
+    [Fact] public async Task Scope_is_bound_to_its_context()
+    {
+        var (_, inst) = Started(10);
+        var task = OpenTask(inst);
+        using var command = db.NewObjectSpace();
+
+        using (RuntimeScope.Open(Ctx(command)))
+        {
+            // The AsyncLocal flows into Task.Run; a different context there is still outside the scope.
+            var ex = await Record.ExceptionAsync(() => Task.Run(() =>
+            {
+                using var other = db.NewObjectSpace();
+                other.GetObjectByKey<WorkflowTask>(task).State = TaskState.Decided;
+                other.CommitChanges();
+            }));
+            Assert.StartsWith("Workflow task:", Assert.IsType<UserFriendlyException>(ex).Message);
+
+            using var sameThread = db.NewObjectSpace();
+            sameThread.GetObjectByKey<WorkflowTask>(task).State = TaskState.Decided;
+            Assert.StartsWith("Workflow task:", Assert.Throws<UserFriendlyException>(() => sameThread.CommitChanges()).Message);
+        }
+        Assert.Equal(TaskState.Open, Tasks(inst).Single(t => t.ID == task).State);
+    }
+
+    [Fact] public void Instance_state_and_outbox_are_guarded_at_persistence()
+    {
+        var (id, inst) = Started(10);
+        static void Refused(IObjectSpace os, string prefix) =>
+            Assert.StartsWith(prefix, Assert.Throws<UserFriendlyException>(() => os.CommitChanges()).Message);
+
+        // A plain (non-secured, admin-equivalent) object space cannot move the state ...
+        using (var os = db.NewObjectSpace()) { os.GetObjectByKey<WorkflowInstance>(inst).StateKey = "ordered"; Refused(os, "Workflow instance:"); }
+        using (var os = db.NewObjectSpace()) { os.GetObjectByKey<WorkflowInstance>(inst).DueUtc = DateTime.UtcNow; Refused(os, "Workflow instance:"); }
+        using (var os = db.NewObjectSpace()) { os.GetObjectByKey<WorkflowInstance>(inst).StateCaption = "x"; Refused(os, "Workflow instance:"); }
+        // ... nor create an instance or an outbox row.
+        using (var os = db.NewObjectSpace())
+        {
+            var i = os.CreateObject<WorkflowInstance>();
+            (i.SubjectType, i.SubjectId) = (typeof(PurchaseRequest).FullName!, Guid.NewGuid());
+            Refused(os, "Workflow instance:");
+        }
+        using (var os = db.NewObjectSpace())
+        {
+            var n = os.CreateObject<WorkflowNotification>();
+            (n.Role, n.Body, n.Instance) = ("Approvers", "fake", os.GetObjectByKey<WorkflowInstance>(inst));
+            Refused(os, "Workflow notification:");
+        }
+        Assert.Equal("approval", Instance(id).StateKey);
+        Assert.DoesNotContain(Notifications(inst), n => n.Body == "fake");
+
+        // The dispatcher's delivery update stays allowed outside the scope.
+        using (var os = db.NewObjectSpace())
+        {
+            var n = os.GetObjectsQuery<WorkflowNotification>().Single(x => x.Instance!.ID == inst);
+            (n.State, n.Attempts, n.LastError) = (NotificationState.Failed, n.Attempts + 1, "smtp down");
+            os.CommitChanges();
+        }
+        Assert.Equal((NotificationState.Failed, 1, "smtp down"), Notifications(inst).Select(n => (n.State, n.Attempts, n.LastError)).Single());
+    }
+
+    [Fact] public void Outcomes_only_for_open_current_task_the_caller_may_decide()
+    {
+        var (_, inst) = Started(10);
+        var task = OpenTask(inst);
+        Assert.Equal(["Approve", "Reject"], rt.Outcomes(Alice(), task));
+        Assert.Empty(rt.Outcomes(db.Caller("bob", "Administrators"), task));   // not in the task's role
+        Ok(rt.Decide(Alice(), task, "Reject"));
+        Assert.Empty(rt.Outcomes(Alice(), task));                              // no longer Open
     }
 
     [Fact] public void Failure_after_effects_rolls_back_everything()

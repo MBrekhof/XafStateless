@@ -212,7 +212,7 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
             var d1 = Draft(os, Unique()); var d2 = Draft(os, Unique());
             var i = os.CreateObject<WorkflowInstance>();
             (i.Definition, i.SubjectType, i.SubjectId, i.StateKey) = (d1, typeof(PurchaseRequest).FullName!, Guid.NewGuid(), "draft");
-            os.CommitChanges();
+            using (RuntimeScope.Open(((DevExpress.ExpressApp.EFCore.EFCoreObjectSpace)os).DbContext)) os.CommitChanges();   // instances are runtime-created
             (instanceId, otherId) = (i.ID, d2.ID);
         }
         using (var os = db.NewObjectSpace())
@@ -228,8 +228,9 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         }
         using (var os = db.NewObjectSpace())
         {
-            os.GetObjectByKey<WorkflowInstance>(instanceId).StateKey = "review";   // runtime-owned, not frozen here
-            os.CommitChanges();
+            os.GetObjectByKey<WorkflowInstance>(instanceId).StateKey = "review";   // runtime-owned: only inside the runtime scope
+            Assert.StartsWith("Workflow instance:", Assert.Throws<UserFriendlyException>(() => os.CommitChanges()).Message);
+            using (RuntimeScope.Open(((DevExpress.ExpressApp.EFCore.EFCoreObjectSpace)os).DbContext)) os.CommitChanges();
         }
     }
 
@@ -450,7 +451,7 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         {
             var i = os.CreateObject<WorkflowInstance>();
             (i.Definition, i.SubjectType, i.SubjectId) = (os.GetObjectByKey<WorkflowDefinition>(d1), "T", Guid.NewGuid());
-            os.CommitChanges();
+            using (RuntimeScope.Open(((DevExpress.ExpressApp.EFCore.EFCoreObjectSpace)os).DbContext)) os.CommitChanges();
             instanceId = i.ID;
         }
         using var ctx = db.NewDbContext();

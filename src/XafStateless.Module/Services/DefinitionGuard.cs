@@ -14,7 +14,8 @@ namespace XafStateless.Module.Services;
 /// is persisted as Draft, and each such write Touches the definition, so a Publish racing a draft edit collides on the
 /// definition row. State changes happen only inside <see cref="AllowPublishing"/>, for the ids it names:
 /// Draft -> Published for <c>publish</c>, Published -> Retired for <c>retire</c>.
-/// Workflow tasks are runtime-written: see <see cref="CheckTasks"/>.
+/// Runtime-owned rows (instances' state, tasks, notification inserts) change only inside a <see cref="RuntimeScope"/> bound to the
+/// saving context: see <see cref="CheckInstances"/>, <see cref="CheckTasks"/>, <see cref="CheckNotifications"/>.
 /// "Persisted" is read from the database with raw SQL (<see cref="RawSql"/>: same connection and transaction, never
 /// rewritten by XAF security, one query per entity type per save), never from the change tracker's original values,
 /// which an attached entity can fake.
@@ -73,13 +74,15 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
     {
         if (ctx == null) return;
         ctx.ChangeTracker.DetectChanges();
-        var instances = ctx.ChangeTracker.Entries<WorkflowInstance>().Where(e => e.State == EntityState.Modified).ToList();
+        var instances = Changed<WorkflowInstance>(ctx);
         var (states, transitions, effects, definitions) = (Changed<WorkflowState>(ctx), Changed<WorkflowTransition>(ctx), Changed<WorkflowEffect>(ctx), Changed<WorkflowDefinition>(ctx));
-        var tasks = Changed<WorkflowTask>(ctx);
-        if (instances.Count + states.Count + transitions.Count + effects.Count + definitions.Count + tasks.Count == 0) return;
+        var (tasks, notifications) = (Changed<WorkflowTask>(ctx), Changed<WorkflowNotification>(ctx));
+        if (instances.Count + states.Count + transitions.Count + effects.Count + definitions.Count + tasks.Count + notifications.Count == 0) return;
 
-        CheckInstances(ctx, instances);
-        CheckTasks(ctx, tasks);
+        var runtime = RuntimeScope.Allows(ctx);   // the scope counts only for the context it was opened for
+        CheckInstances(ctx, instances, runtime);
+        CheckTasks(ctx, tasks, runtime);
+        CheckNotifications(notifications, runtime);
 
         // Persisted parents, one query per type. An effect's owner goes through its state, so effects are read first.
         var effectParents = PersistedParents<WorkflowEffect>(ctx, Existing(effects), nameof(WorkflowEffect.State));
@@ -162,21 +165,43 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         }
     }
 
-    /// <summary>Definition, SubjectType and SubjectId are fixed once set, judged against the database rows (one query).</summary>
-    static void CheckInstances(DbContext ctx, List<EntityEntry<WorkflowInstance>> instances)
+    static UserFriendlyException RefuseInstance(string message) => new($"Workflow instance: {message}");
+
+    static readonly string[] InstanceStateColumns =
+        [nameof(WorkflowInstance.StateKey), nameof(WorkflowInstance.StateCaption), nameof(WorkflowInstance.EnteredUtc), nameof(WorkflowInstance.DueUtc)];
+
+    /// <summary>Instances are created by the runtime only (inside its scope). Definition, SubjectType and SubjectId are fixed once
+    /// set; StateKey, StateCaption, EnteredUtc and DueUtc change only inside the runtime scope, for every role, Administrators too.
+    /// Judged against the database rows (one query).</summary>
+    static void CheckInstances(DbContext ctx, List<EntityEntry<WorkflowInstance>> instances, bool runtime)
     {
-        if (instances.Count == 0) return;
+        if (!runtime && instances.Any(e => e.State == EntityState.Added)) throw RefuseInstance("instances are created by the workflow runtime only.");
+        var modified = instances.Where(e => e.State == EntityState.Modified).ToList();
+        if (modified.Count == 0) return;
         var fk = RawSql.ForeignKey<WorkflowInstance>(ctx, nameof(WorkflowInstance.Definition));
-        var rows = RawSql.Rows<WorkflowInstance>(ctx, Id, instances.Select(e => e.Entity.ID), Id, fk, nameof(WorkflowInstance.SubjectType), nameof(WorkflowInstance.SubjectId))
+        var rows = RawSql.Rows<WorkflowInstance>(ctx, Id, modified.Select(e => e.Entity.ID),
+                [Id, fk, nameof(WorkflowInstance.SubjectType), nameof(WorkflowInstance.SubjectId), .. InstanceStateColumns])
             .ToDictionary(r => (Guid)r[0]!);
-        foreach (var e in instances)
+        foreach (var e in modified)
         {
             if (!rows.TryGetValue(e.Entity.ID, out var row)) throw Refuse("the workflow instance does not exist.");
             var now = new object?[] { (Guid?)e.Property(fk).CurrentValue, e.Entity.SubjectType, e.Entity.SubjectId };
             for (var i = 0; i < now.Length; i++)
                 if (!IsUnset(row[i + 1]) && !Equals(row[i + 1], now[i]))
                     throw Refuse("a workflow instance's definition and subject are fixed once set.");
+            if (runtime) continue;
+            for (var i = 0; i < InstanceStateColumns.Length; i++)
+                if (!Same(e.Property(InstanceStateColumns[i]).CurrentValue, row[1 + now.Length + i]))
+                    throw RefuseInstance("its state changes only through the workflow.");
         }
+    }
+
+    /// <summary>Notifications are written into the outbox by the runtime only (inside its scope). Delivery updates (State,
+    /// Attempts, LastError) by a dispatcher are not restricted here.</summary>
+    static void CheckNotifications(List<EntityEntry<WorkflowNotification>> notifications, bool runtime)
+    {
+        if (!runtime && notifications.Any(e => e.State == EntityState.Added))
+            throw new UserFriendlyException("Workflow notification: notifications are created by the workflow runtime only.");
     }
 
     static UserFriendlyException RefuseTask(string message) => new($"Workflow task: {message}");
@@ -185,12 +210,11 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         [nameof(WorkflowTask.State), nameof(WorkflowTask.DecidedBy), nameof(WorkflowTask.Outcome), nameof(WorkflowTask.DecidedUtc)];
 
     /// <summary>Tasks are written by the runtime only: inserts, and changes to State/DecidedBy/Outcome/DecidedUtc, only inside a
-    /// <see cref="RuntimeScope"/>. Instance, StateKey, Role and Subject are fixed after insert, even inside the scope; tasks are
+    /// <see cref="RuntimeScope"/> bound to the saving context. Instance, StateKey, Role and Subject are fixed after insert, even inside the scope; tasks are
     /// never deleted (hard or soft). Judged against the database rows (one query), never the change tracker's original values.</summary>
-    static void CheckTasks(DbContext ctx, List<EntityEntry<WorkflowTask>> tasks)
+    static void CheckTasks(DbContext ctx, List<EntityEntry<WorkflowTask>> tasks, bool inScope)
     {
         if (tasks.Count == 0) return;
-        var inScope = RuntimeScope.Current != null;
         if (tasks.Any(e => e.State == EntityState.Deleted)) throw RefuseTask("a task cannot be deleted.");
         if (!inScope && tasks.Any(e => e.State == EntityState.Added)) throw RefuseTask("tasks are created by the workflow runtime only.");
         var modified = tasks.Where(e => e.State == EntityState.Modified).ToList();

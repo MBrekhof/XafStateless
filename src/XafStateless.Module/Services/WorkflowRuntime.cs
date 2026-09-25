@@ -2,6 +2,7 @@ using System.Globalization;
 using DevExpress.Data.Filtering;
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.DC;
+using DevExpress.ExpressApp.EFCore;
 using XafStateless.Engine;
 using XafStateless.Module.BusinessObjects;
 
@@ -75,7 +76,8 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
     {
         using var os = c.NewCommandSpace();
         var (x, refusal) = Load(os, c, By.Task, null, taskId);
-        return refusal != null ? [] : OutcomesOf(x!.Def!, x.Task!.StateKey);
+        if (refusal != null || x!.Task is not { State: TaskState.Open } task || task.StateKey != x.Instance!.StateKey || !c.InRole(task.Role)) return [];
+        return OutcomesOf(x.Def!, task.StateKey);
     }
 
     static List<string> OutcomesOf(WorkflowDef def, string stateKey) => def.From(stateKey).Select(t => t.Trigger).Distinct().ToList();
@@ -163,7 +165,8 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
                 var (x, refusal) = Load(os, c, by, subjectType, id);
                 if (refusal != null) return new(false, refusal, []);
                 TestHook?.Invoke("after-load", attempt);
-                using var scope = RuntimeScope.Open();   // disposed only after CommitChanges returned or threw
+                // Bound to this command's DbContext; disposed only after CommitChanges returned or threw.
+                using var scope = RuntimeScope.Open((os as EFCoreObjectSpace)?.DbContext ?? throw new NotSupportedException("The workflow runtime needs EF Core command object spaces."));
                 if (apply(x!) is { } refused) return new(false, refused, []);
                 foreach (var row in new object?[] { x!.Subject, x.Instance, x.Task })
                     if (row != null && !os.IsNewObject(row)) Concurrency.Touch(os, row);

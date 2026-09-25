@@ -17,6 +17,7 @@
 //   ONE SaveChanges pass that an EF SaveChangesInterceptor sees -- so Task 7b's guard gets its pass on the final save.
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.DataLocking;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace XafStateless.Module.Services;
@@ -39,8 +40,10 @@ public static class Concurrency
 
 /// <summary>
 /// The runtime's write permit: open while a command runs its machine AND commits (guards run in SavingChanges), one per
-/// attempt. Guards ask <see cref="Current"/>. Modelled on DefinitionGuard.AllowPublishing: an AsyncLocal holding the scope,
-/// and disposal revokes it everywhere, including in an execution context captured inside it. Internal: only the runtime opens it.
+/// attempt, and bound to the command's own DbContext. Modelled on DefinitionGuard.AllowPublishing: an AsyncLocal holding the
+/// scope, and disposal revokes it everywhere, including in an execution context captured inside it. The AsyncLocal also flows
+/// into Task.Run and threads started inside the scope, so a guard honours it only for the bound context (<see cref="Allows"/>):
+/// a save of any other context, on any thread, is judged as outside the scope. Internal: only the runtime opens it.
 /// </summary>
 internal sealed class RuntimeScope : IDisposable
 {
@@ -48,12 +51,18 @@ internal sealed class RuntimeScope : IDisposable
     readonly RuntimeScope? previous;
     volatile bool disposed;
 
-    RuntimeScope(RuntimeScope? previous) => this.previous = previous;
+    RuntimeScope(DbContext context, RuntimeScope? previous) => (Context, this.previous) = (context, previous);
+
+    /// <summary>The only context whose saves this scope permits.</summary>
+    public DbContext Context { get; }
 
     /// <summary>The open scope of this flow, or null (none, or disposed).</summary>
     public static RuntimeScope? Current => current.Value is { disposed: false } s ? s : null;
 
-    public static RuntimeScope Open() => current.Value = new RuntimeScope(current.Value);
+    /// <summary>True when an open scope of this flow is bound to exactly <paramref name="context"/>.</summary>
+    public static bool Allows(DbContext? context) => context != null && ReferenceEquals(Current?.Context, context);
+
+    public static RuntimeScope Open(DbContext context) => current.Value = new RuntimeScope(context, current.Value);
 
     public void Dispose()
     {
