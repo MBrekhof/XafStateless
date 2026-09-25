@@ -1,9 +1,11 @@
+using DevExpress.Persistent.Base;
 using DevExpress.Persistent.BaseImpl.EF;
 
 namespace XafStateless.Module.BusinessObjects;
 
 public enum NotificationState { Pending, Sent, Failed }
 
+[NavigationItem("Workflow")]
 public class WorkflowNotification : BaseObject
 {
     public virtual string Role { get; set; } = "";

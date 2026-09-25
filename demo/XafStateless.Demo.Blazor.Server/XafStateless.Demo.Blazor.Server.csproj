@@ -28,5 +28,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\XafStateless.Demo.Module\XafStateless.Demo.Module.csproj" />
+    <ProjectReference Include="..\..\src\XafStateless.Blazor\XafStateless.Blazor.csproj" />
   </ItemGroup>
 </Project>

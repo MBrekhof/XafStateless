@@ -9,6 +9,9 @@ using DevExpress.Persistent.BaseImpl.EF;
 using DevExpress.Persistent.BaseImpl.EF.PermissionPolicy;
 using XafStateless.Demo.Module.BusinessObjects;
 using Microsoft.Extensions.DependencyInjection;
+using XafStateless.Engine;
+using XafStateless.Module.BusinessObjects;
+using XafStateless.Module.Services;
 
 namespace XafStateless.Demo.Module.DatabaseUpdate;
 
@@ -33,6 +36,8 @@ public class Updater : ModuleUpdater {
         // If a role doesn't exist in the database, create this role
         var defaultRole = CreateDefaultRole();
         var adminRole = CreateAdminRole();
+        var approversRole = CreateRole("Approvers", r => WorkflowPermissions.GrantParticipant(r, (typeof(PurchaseRequest), "PurchaseRequest_ListView")));
+        var designersRole = CreateRole("WorkflowDesigners", WorkflowPermissions.GrantDesigner);
 
         ObjectSpace.CommitChanges(); //This line persists created object(s).
 
@@ -58,12 +63,80 @@ public class Updater : ModuleUpdater {
             });
         }
 
+        // Workflow demo users, empty passwords like the template's.
+        foreach(var (name, role) in new[] { ("designer", designersRole), ("approver", approversRole) }) {
+            if(userManager.FindUserByName<ApplicationUser>(ObjectSpace, name) == null) {
+                string EmptyPassword = "";
+                _ = userManager.CreateUser<ApplicationUser>(ObjectSpace, name, EmptyPassword, (user) => {
+                    user.Roles.Add(role);
+                    user.Roles.Add(defaultRole);
+                });
+            }
+        }
+
         ObjectSpace.CommitChanges(); //This line persists created object(s).
+
+        SeedPurchaseRequestWorkflow();
 #endif
     }
     public override void UpdateDatabaseBeforeUpdateSchema() {
         base.UpdateDatabaseBeforeUpdateSchema();
     }
+    PermissionPolicyRole CreateRole(string name, Action<PermissionPolicyRole> grant) {
+        var role = ObjectSpace.FirstOrDefault<PermissionPolicyRole>(r => r.Name == name);
+        if(role == null) {
+            role = ObjectSpace.CreateObject<PermissionPolicyRole>();
+            role.Name = name;
+            grant(role);
+        }
+        return role;
+    }
+
+    /// <summary>The purchase-request workflow (the engine tests' fixture), published as v1 once.</summary>
+    static readonly WorkflowDef PurchaseRequestWorkflow = new("purchase-request", 1, "draft",
+        [
+            new("draft", "Draft", StateKind.Manual),
+            new("approval", "Approval", StateKind.Task, TaskRole: "Approvers",
+                OnEntry: [new(EffectKind.Notify, "Approvers", "Please approve {Title}")]),
+            new("decide-amount", "Amount check", StateKind.Decision),
+            new("wait-cooling", "Cooling-off", StateKind.Wait, WaitMinutes: 1),
+            new("ordered", "Ordered", StateKind.Final, OnEntry: [new(EffectKind.SetField, "Ordered", "true")]),
+            new("rejected", "Rejected", StateKind.Final),
+        ],
+        [
+            new("draft", "Submit", "approval"),
+            new("approval", "Approve", "decide-amount"),
+            new("approval", "Reject", "rejected"),
+            new("decide-amount", "Large", "wait-cooling", Criteria: "Amount > 1000", Order: 0),
+            new("decide-amount", "Small", "ordered", Order: 1),
+            new("wait-cooling", "Cooled", "ordered"),
+        ]);
+
+    void SeedPurchaseRequestWorkflow() {
+        var def = PurchaseRequestWorkflow;
+        if(ObjectSpace.FirstOrDefault<WorkflowDefinition>(d => d.Name == def.Name) != null) return;
+        var d = ObjectSpace.CreateObject<WorkflowDefinition>();
+        (d.Name, d.TargetTypeName, d.Version, d.State, d.InitialStateKey) = (def.Name, typeof(PurchaseRequest).FullName!, def.Version, DefinitionState.Draft, def.InitialState);
+        foreach(var s in def.States) {
+            var state = ObjectSpace.CreateObject<WorkflowState>();
+            (state.Key, state.Caption, state.Kind, state.TaskRole, state.WaitMinutes) = (s.Key, s.Caption, s.Kind, s.TaskRole, s.WaitMinutes);
+            foreach(var e in s.Effects) {
+                var effect = ObjectSpace.CreateObject<WorkflowEffect>();
+                (effect.Order, effect.Kind, effect.Target, effect.Value) = (state.Effects.Count, e.Kind, e.Target, e.Value);
+                state.Effects.Add(effect);
+            }
+            d.States.Add(state);
+        }
+        foreach(var t in def.Transitions) {
+            var tr = ObjectSpace.CreateObject<WorkflowTransition>();
+            (tr.FromKey, tr.Trigger, tr.ToKey, tr.Criteria, tr.RequiredRole, tr.Order) = (t.From, t.Trigger, t.To, t.Criteria, t.RequiredRole, t.Order);
+            d.Transitions.Add(tr);
+        }
+        ObjectSpace.CommitChanges();   // Publish needs a saved draft and nothing else pending
+        var r = ObjectSpace.ServiceProvider.GetRequiredService<DefinitionService>().Publish(ObjectSpace, d, "setup", WorkflowRoleCatalog.Names(ObjectSpace));
+        if(!r.Ok) throw new InvalidOperationException("Seeding the purchase-request workflow failed: " + string.Join("; ", r.Messages));
+    }
+
     PermissionPolicyRole CreateAdminRole() {
         PermissionPolicyRole adminRole = ObjectSpace.FirstOrDefault<PermissionPolicyRole>(r => r.Name == "Administrators");
         if(adminRole == null) {

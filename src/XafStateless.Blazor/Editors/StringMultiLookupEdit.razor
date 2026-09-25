@@ -1,0 +1,34 @@
+@using DevExpress.Blazor
+@using XafStateless.Module.Services
+
+@* Picks several values of LookupItems; the value is the picks joined with StringLookup.Separator. *@
+<DxTagBox Data="@items"
+          Values="@selected"
+          ValuesChanged="@((IEnumerable<string> v) => OnValuesChanged(v))"
+          AllowCustomTags="false"
+          ReadOnly="@ReadOnly"
+          Enabled="@(!ReadOnly)"
+          SearchMode="ListSearchMode.AutoSearch"
+          SearchFilterCondition="ListSearchFilterCondition.Contains"
+          ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+
+@code {
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public IReadOnlyList<string> LookupItems { get; set; } = [];
+    [Parameter] public bool ReadOnly { get; set; }
+
+    List<string> items = [];
+    List<string> selected = [];
+
+    // Rebuilt from the incoming Value each time: a stored value no longer in the list stays in Data, so it shows and can
+    // be removed; once removed it drops out of Data and cannot be re-added.
+    protected override void OnParametersSet()
+    {
+        selected = (Value ?? "").Split(StringLookup.Separator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        items = (LookupItems ?? []).Concat(selected).Distinct().ToList();
+    }
+
+    // The Value parameter is not mutated here; the editor writes the object and hands the new Value back.
+    Task OnValuesChanged(IEnumerable<string>? values) => ValueChanged.InvokeAsync(string.Join(StringLookup.Separator, values ?? []));
+}

@@ -1,9 +1,11 @@
+using DevExpress.Persistent.Base;
 using DevExpress.Persistent.BaseImpl.EF;
 
 namespace XafStateless.Module.BusinessObjects;
 
 public enum TaskState { Open, Decided, Superseded }
 
+[NavigationItem("Workflow")]
 public class WorkflowTask : BaseObject
 {
     public virtual WorkflowInstance? Instance { get; set; }

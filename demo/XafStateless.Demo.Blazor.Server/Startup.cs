@@ -39,6 +39,7 @@ public class Startup {
                     options.AllowValidationDetailsAccess = false;
                 })
                 .Add<XafStateless.Demo.Module.DemoModule>()
+                .Add<XafStateless.Blazor.XafStatelessBlazorModule>()
                 .Add<DemoBlazorModule>();
             builder.ObjectSpaceProviders
                 .AddSecuredEFCore(options => {

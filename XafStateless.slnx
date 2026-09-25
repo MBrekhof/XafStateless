@@ -4,6 +4,7 @@
     <Project Path="demo/XafStateless.Demo.Module/XafStateless.Demo.Module.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/XafStateless.Blazor/XafStateless.Blazor.csproj" />
     <Project Path="src/XafStateless.Engine/XafStateless.Engine.csproj" />
     <Project Path="src/XafStateless.Module/XafStateless.Module.csproj" />
   </Folder>
