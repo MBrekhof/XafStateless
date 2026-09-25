@@ -1,8 +1,14 @@
 <Solution>
+  <Folder Name="/demo/">
+    <Project Path="demo/XafStateless.Demo.Blazor.Server/XafStateless.Demo.Blazor.Server.csproj" />
+    <Project Path="demo/XafStateless.Demo.Module/XafStateless.Demo.Module.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/XafStateless.Engine/XafStateless.Engine.csproj" />
+    <Project Path="src/XafStateless.Module/XafStateless.Module.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/XafStateless.Engine.Tests/XafStateless.Engine.Tests.csproj" />
+    <Project Path="tests/XafStateless.Module.Tests/XafStateless.Module.Tests.csproj" />
   </Folder>
 </Solution>
