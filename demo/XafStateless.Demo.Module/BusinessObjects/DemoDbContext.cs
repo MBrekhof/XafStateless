@@ -32,10 +32,12 @@ public class DemoEFCoreDbContext : DbContext {
     public DbSet<WorkflowNotification> WorkflowNotifications { get; set; }
     public DbSet<PurchaseRequest> PurchaseRequests { get; set; }
 
-    // The definition guard runs for every context, whoever builds it (XAF provider, updater, tests).
+    // The workflow guards run for every context, whoever builds it (XAF provider, updater, tests).
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
-        if(optionsBuilder.Options.FindExtension<CoreOptionsExtension>()?.Interceptors?.Contains(DefinitionGuard.Instance) != true)
-            optionsBuilder.AddInterceptors(DefinitionGuard.Instance);
+        var registered = optionsBuilder.Options.FindExtension<CoreOptionsExtension>()?.Interceptors;
+        foreach(var guard in new Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor[] { DefinitionGuard.Instance, StateLockGuard.Instance })
+            if(registered?.Contains(guard) != true)
+                optionsBuilder.AddInterceptors(guard);
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) {

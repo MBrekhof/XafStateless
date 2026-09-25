@@ -152,15 +152,19 @@ public class PermissionTests : IClassFixture<TestDb>
 
     [Fact] public void Approver_cannot_change_workflow_link()
     {
-        using var provider = LogOn(Approver);
+        using var provider = LogOn(Approver, out var security);
         Guid request;
         using (var user = provider.CreateObjectSpace()) (request, _) = Submitted(user);
         using (var user = provider.CreateObjectSpace())
         {
             var pr = user.GetObjectByKey<PurchaseRequest>(request);
             Assert.NotNull(pr.Workflow);   // load the link first: nulling a never-loaded lazy reference is no change at all
+            // The permission denies the write in its own right (control: Title is granted) ...
+            Assert.True(security.IsGranted(new PermissionRequest(user, typeof(PurchaseRequest), SecurityOperations.Write, pr, nameof(PurchaseRequest.Title))));
+            Assert.False(security.IsGranted(new PermissionRequest(user, typeof(PurchaseRequest), SecurityOperations.Write, pr, nameof(PurchaseRequest.Workflow))));
             pr.Workflow = null;
-            Assert.Contains("prohibited by security rules", Assert.ThrowsAny<Exception>(() => user.CommitChanges()).Message);
+            // ... and StateLockGuard refuses the save first, for every role (Task 7b).
+            Assert.Contains(StateLockGuard.LinkManaged, Assert.ThrowsAny<Exception>(() => user.CommitChanges()).Message);
         }
         using var check = db.NewObjectSpace();
         Assert.NotNull(check.GetObjectByKey<PurchaseRequest>(request).Workflow);

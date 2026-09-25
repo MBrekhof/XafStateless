@@ -50,6 +50,7 @@ public sealed class SubjectWorkflowController : ViewController<DetailView>
     {
         WorkflowCommand.Run(Application, View, command);
         Refill();
+        Frame.GetController<StateLockAppearanceController>()?.Reapply();   // the state may have changed: its locks with it
     }
 
     /// <summary>Start: the Published definitions for this subject type, while no workflow runs. Transition: the manual

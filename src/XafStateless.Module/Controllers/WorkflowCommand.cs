@@ -23,7 +23,11 @@ public static class WorkflowCommand
 
     /// <summary>Commits pending changes of <paramref name="os"/>. A refused save (validation, security, a guard) shows its
     /// message and returns false; the pending changes stay for the user to fix.</summary>
-    public static bool Save(XafApplication app, IObjectSpace os)
+    public static bool Save(XafApplication app, IObjectSpace os) => Save(os, m => ShowError(app, m));
+
+    static void ShowError(XafApplication app, string message) => app.ShowViewStrategy.ShowMessage(message, InformationType.Error);
+
+    internal static bool Save(IObjectSpace os, Action<string> showError)
     {
         if (!os.IsModified) return true;
         try
@@ -34,18 +38,22 @@ public static class WorkflowCommand
         catch (Exception ex)
         {
             Tracing.Tracer.LogError(ex);
-            app.ShowViewStrategy.ShowMessage(ex.Message, InformationType.Error);
+            showError(ex.Message);
             return false;
         }
     }
 
     /// <summary>Save, run <paramref name="command"/> as the current user, refresh the view to the committed result, and show
     /// the runtime's message when it refused.</summary>
-    public static void Run(XafApplication app, ObjectView view, Func<WorkflowCaller, RunResult> command)
+    public static void Run(XafApplication app, ObjectView view, Func<WorkflowCaller, RunResult> command) =>
+        Run(view.ObjectSpace, () => Caller(app, view.ObjectSpace), command, m => ShowError(app, m));
+
+    /// <summary>The same path without a frame (tests): a refused save stops before <paramref name="command"/> runs.</summary>
+    internal static void Run(IObjectSpace os, Func<WorkflowCaller> caller, Func<WorkflowCaller, RunResult> command, Action<string> showError)
     {
-        if (!Save(app, view.ObjectSpace)) return;
-        var result = command(Caller(app, view.ObjectSpace));
-        view.ObjectSpace.Refresh();
-        if (!result.Ok) app.ShowViewStrategy.ShowMessage(result.Message, InformationType.Error);
+        if (!Save(os, showError)) return;
+        var result = command(caller());
+        os.Refresh();
+        if (!result.Ok) showError(result.Message);
     }
 }

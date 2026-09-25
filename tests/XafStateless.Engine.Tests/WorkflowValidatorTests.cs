@@ -6,6 +6,7 @@ sealed class FakeEnv(params string[] roles) : IWorkflowEnvironment
     public bool RoleExists(string r) => roles.Contains(r);
     public string? CheckCriteria(string c) => c.Contains("Nope") ? "unknown member Nope" : null;
     public string? CheckEffect(EffectDef e) => e.Target == "Nope" ? "unknown member Nope" : null;
+    public string? CheckMember(string m) => m == "Nope" ? "unknown member Nope" : null;
 }
 
 public class WorkflowValidatorTests
@@ -171,5 +172,15 @@ public class WorkflowValidatorTests
     {
         var d = Pr with { Transitions = Pr.Transitions.Select(t => t.Trigger == "Submit" ? t with { RequiredRole = "Ghosts" } : t).ToList() };
         Assert.Contains(V(d), e => e.Contains("role 'Ghosts' does not exist"));
+    }
+
+    [Fact] public void Lock_on_unknown_member_is_refused()
+    {
+        var d = Pr with { States = Pr.States.Select(s => s.Key == "approval" ? s with { Locked = ["Amount", "Nope"] } : s).ToList() };
+        var errs = V(d);
+        Assert.Contains("lock on 'Nope': unknown member Nope", errs);
+        Assert.DoesNotContain(errs, e => e.Contains("'Amount'"));
+        Assert.Equal(["Amount", "Nope"], d.State("approval").LockedMembers);
+        Assert.Empty(Pr.State("approval").LockedMembers);
     }
 }

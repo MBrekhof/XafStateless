@@ -9,7 +9,7 @@ public static class DefinitionMapper
     /// <summary>Entities -> the engine's definition. Blank optional texts (a cleared editor) become null.</summary>
     public static WorkflowDef ToDef(WorkflowDefinition d) => new(d.Name, d.Version, d.InitialStateKey,
         d.States.Select(s => new StateDef(s.Key, s.Caption, s.Kind, Opt(s.TaskRole), s.WaitMinutes,
-            s.Effects.OrderBy(e => e.Order).Select(e => new EffectDef(e.Kind, e.Target, e.Value)).ToList())).ToList(),
+            s.Effects.OrderBy(e => e.Order).Select(e => new EffectDef(e.Kind, e.Target, e.Value)).ToList(), Members(s.LockedMembers))).ToList(),
         d.Transitions.Select(t => new TransitionDef(t.FromKey, t.Trigger, t.ToKey, Opt(t.Criteria), Opt(t.RequiredRole), t.Order)).ToList());
 
     /// <summary>The engine's definition -> a new Draft graph in <paramref name="os"/> (not committed), for seeding a host
@@ -22,6 +22,7 @@ public static class DefinitionMapper
         {
             var state = os.CreateObject<WorkflowState>();
             (state.Key, state.Caption, state.Kind, state.TaskRole, state.WaitMinutes) = (s.Key, s.Caption, s.Kind, s.TaskRole, s.WaitMinutes);
+            state.LockedMembers = s.LockedMembers.Count == 0 ? null : string.Join(StringLookup.Separator, s.LockedMembers);
             foreach (var e in s.Effects)
             {
                 var effect = os.CreateObject<WorkflowEffect>();
@@ -40,4 +41,8 @@ public static class DefinitionMapper
     }
 
     internal static string? Opt(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
+
+    /// <summary>A <see cref="StringLookup.Separator"/>-joined member list -> its names (blanks dropped).</summary>
+    internal static IReadOnlyList<string> Members(string? joined) =>
+        (joined ?? "").Split(StringLookup.Separator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 }

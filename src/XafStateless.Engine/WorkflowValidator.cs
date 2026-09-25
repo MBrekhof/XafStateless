@@ -5,6 +5,7 @@ public interface IWorkflowEnvironment
     bool RoleExists(string role);
     string? CheckCriteria(string criteria);      // null = ok, else the error text
     string? CheckEffect(EffectDef effect);       // null = ok (member exists, writable, value converts; template placeholders exist)
+    string? CheckMember(string member);          // null = ok (a member effects and locks may use)
 }
 
 public static class WorkflowValidator
@@ -62,6 +63,8 @@ public static class WorkflowValidator
                 if (e.Kind == EffectKind.Notify && !env.RoleExists(e.Target)) errs.Add($"role '{e.Target}' does not exist");
                 if (env.CheckEffect(e) is { } err) errs.Add($"effect on '{s.Key}': {err}");
             }
+            foreach (var m in s.LockedMembers)
+                if (env.CheckMember(m) is { } err) errs.Add($"lock on '{m}': {err}");
         }
         foreach (var t in def.Transitions)
         {

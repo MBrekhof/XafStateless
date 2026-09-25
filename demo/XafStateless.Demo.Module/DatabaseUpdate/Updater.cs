@@ -92,12 +92,12 @@ public class Updater : ModuleUpdater {
         return role;
     }
 
-    /// <summary>The purchase-request workflow (the engine tests' fixture), published as v1 once.</summary>
+    /// <summary>The purchase-request workflow (the engine tests' fixture, plus Amount locked in approval), published as v1 once.</summary>
     static readonly WorkflowDef PurchaseRequestWorkflow = new("purchase-request", 1, "draft",
         [
             new("draft", "Draft", StateKind.Manual),
             new("approval", "Approval", StateKind.Task, TaskRole: "Approvers",
-                OnEntry: [new(EffectKind.Notify, "Approvers", "Please approve {Title}")]),
+                OnEntry: [new(EffectKind.Notify, "Approvers", "Please approve {Title}")], Locked: ["Amount"]),   // the amount under approval cannot change
             new("decide-amount", "Amount check", StateKind.Decision),
             new("wait-cooling", "Cooling-off", StateKind.Wait, WaitMinutes: 1),
             new("ordered", "Ordered", StateKind.Final, OnEntry: [new(EffectKind.SetField, "Ordered", "true")]),

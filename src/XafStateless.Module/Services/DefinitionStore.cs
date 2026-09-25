@@ -37,7 +37,7 @@ public sealed class DefinitionStore
                 nameof(WorkflowDefinition.InitialStateKey), nameof(WorkflowDefinition.State)).SingleOrDefault()
             ?? throw new InvalidOperationException($"Workflow definition {id} does not exist.");
         var states = RawSql.Rows<WorkflowState>(ctx, RawSql.ForeignKey<WorkflowState>(ctx, nameof(WorkflowState.Definition)), [id],
-            Id, nameof(WorkflowState.Key), nameof(WorkflowState.Caption), nameof(WorkflowState.Kind), nameof(WorkflowState.TaskRole), nameof(WorkflowState.WaitMinutes));
+            Id, nameof(WorkflowState.Key), nameof(WorkflowState.Caption), nameof(WorkflowState.Kind), nameof(WorkflowState.TaskRole), nameof(WorkflowState.WaitMinutes), nameof(WorkflowState.LockedMembers));
         var stateFk = RawSql.ForeignKey<WorkflowEffect>(ctx, nameof(WorkflowEffect.State));
         var effects = RawSql.Rows<WorkflowEffect>(ctx, stateFk, states.Select(s => (Guid)s[0]!),
                 stateFk, nameof(WorkflowEffect.Order), nameof(WorkflowEffect.Kind), nameof(WorkflowEffect.Target), nameof(WorkflowEffect.Value))
@@ -49,7 +49,8 @@ public sealed class DefinitionStore
         var def = new WorkflowDef((string)head[0]!, (int)head[1]!, (string)head[2]!,
             states.Select(s => new StateDef((string)s[1]!, (string)s[2]!, (StateKind)(int)s[3]!, DefinitionMapper.Opt((string?)s[4]), (int?)s[5],
                 effects[(Guid)s[0]!].OrderBy(e => (int)e[1]!)
-                    .Select(e => new EffectDef((EffectKind)(int)e[2]!, (string)e[3]!, (string)e[4]!)).ToList())).ToList(),
+                    .Select(e => new EffectDef((EffectKind)(int)e[2]!, (string)e[3]!, (string)e[4]!)).ToList(),
+                DefinitionMapper.Members((string?)s[6]))).ToList(),
             transitions.Select(t => new TransitionDef((string)t[0]!, (string)t[1]!, (string)t[2]!,
                 DefinitionMapper.Opt((string?)t[3]), DefinitionMapper.Opt((string?)t[4]), (int)t[5]!)).ToList());
         return (def, (DefinitionState)(int)head[3]!);

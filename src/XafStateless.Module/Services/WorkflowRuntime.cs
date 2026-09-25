@@ -48,6 +48,8 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
         public WorkflowTask? Task { get; set; }
         public WorkflowDef? Def { get; set; }
         public IReadOnlyList<Step> Steps { get; set; } = [];
+        /// <summary>This attempt's write permit; SetField records its (subject, member) exemption here.</summary>
+        public RuntimeScope? Scope { get; set; }
     }
 
     public RunResult Start(WorkflowCaller c, Type subjectType, Guid subjectId, string definitionName) =>
@@ -167,6 +169,7 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
                 TestHook?.Invoke("after-load", attempt);
                 // Bound to this command's DbContext; disposed only after CommitChanges returned or threw.
                 using var scope = RuntimeScope.Open((os as EFCoreObjectSpace)?.DbContext ?? throw new NotSupportedException("The workflow runtime needs EF Core command object spaces."));
+                x!.Scope = scope;
                 if (apply(x!) is { } refused) return new(false, refused, []);
                 foreach (var row in new object?[] { x!.Subject, x.Instance, x.Task })
                     if (row != null && !os.IsNewObject(row)) Concurrency.Touch(os, row);
@@ -238,6 +241,7 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
                     var member = WorkflowMembers.Supported(x.Type).FirstOrDefault(m => m.Name == effect.Target)
                                  ?? throw new InvalidOperationException($"'{effect.Target}' cannot be set by a workflow");
                     member.SetValue(x.Subject, XafWorkflowEnvironment.ConvertValue(member.MemberType, effect.Value));
+                    (x.Scope ?? throw new InvalidOperationException("SetField runs only inside the runtime scope")).Allow(x.Subject.ID, member.Name);   // exempt from StateLockGuard, this member only
                     break;
                 case EffectKind.Notify:
                     var note = x.Os.CreateObject<WorkflowNotification>();

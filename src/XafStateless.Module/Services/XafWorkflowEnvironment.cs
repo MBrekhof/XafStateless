@@ -43,6 +43,9 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
         }
     }
 
+    public string? CheckMember(string member) =>
+        WorkflowMembers.Supported(target).Any(m => m.Name == member) ? null : $"'{member}' is not a member of {target.Name} that a workflow may use";
+
     /// <summary>The one text-to-member conversion (validation now, SetField at runtime): invariant culture; "" is null for a nullable member.</summary>
     internal static object? ConvertValue(Type memberType, string value)
     {

@@ -16,12 +16,16 @@ internal static class RawSql
     const int ChunkSize = 2000;   // SQL Server allows 2100 parameters per command
 
     /// <summary>The given <paramref name="columns"/> (property names) of every live row whose <paramref name="keyProperty"/> is in <paramref name="keys"/>.</summary>
-    public static List<object?[]> Rows<T>(DbContext ctx, string keyProperty, IEnumerable<Guid> keys, params string[] columns)
+    public static List<object?[]> Rows<T>(DbContext ctx, string keyProperty, IEnumerable<Guid> keys, params string[] columns) =>
+        Rows(ctx, typeof(T), keyProperty, keys, columns);
+
+    /// <summary>The same for an entity type known only at run time (a host's subject type).</summary>
+    public static List<object?[]> Rows(DbContext ctx, Type entityType, string keyProperty, IEnumerable<Guid> keys, params string[] columns)
     {
         var rows = new List<object?[]>();
         var list = keys.Distinct().ToList();
         if (list.Count == 0) return rows;
-        var et = ctx.Model.FindEntityType(typeof(T)) ?? throw new InvalidOperationException($"{typeof(T).Name} is not mapped.");
+        var et = ctx.Model.FindEntityType(entityType) ?? throw new InvalidOperationException($"{entityType.Name} is not mapped.");
         var table = StoreObjectIdentifier.Table(et.GetTableName()!, et.GetSchema());
         string Col(string property) => $"[{et.FindProperty(property)!.GetColumnName(table)}]";
         var from = (et.GetSchema() is { } schema ? $"[{schema}]." : "") + $"[{et.GetTableName()}]";

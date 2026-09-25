@@ -7,9 +7,11 @@ public enum EffectKind { Notify, SetField }
 public sealed record EffectDef(EffectKind Kind, string Target, string Value);
 
 public sealed record StateDef(string Key, string Caption, StateKind Kind,
-    string? TaskRole = null, int? WaitMinutes = null, IReadOnlyList<EffectDef>? OnEntry = null)
+    string? TaskRole = null, int? WaitMinutes = null, IReadOnlyList<EffectDef>? OnEntry = null, IReadOnlyList<string>? Locked = null)
 {
     public IReadOnlyList<EffectDef> Effects => OnEntry ?? [];
+    /// <summary>Subject members that cannot change while an instance is in this state (the runtime's own SetFields excepted).</summary>
+    public IReadOnlyList<string> LockedMembers => Locked ?? [];
 }
 
 public sealed record TransitionDef(string From, string Trigger, string To,

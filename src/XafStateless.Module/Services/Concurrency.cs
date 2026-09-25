@@ -44,11 +44,13 @@ public static class Concurrency
 /// scope, and disposal revokes it everywhere, including in an execution context captured inside it. The AsyncLocal also flows
 /// into Task.Run and threads started inside the scope, so a guard honours it only for the bound context (<see cref="Allows"/>):
 /// a save of any other context, on any thread, is judged as outside the scope. Internal: only the runtime opens it.
+/// It also carries the member-precise exemptions StateLockGuard honours: one (subject, member) pair per SetField.
 /// </summary>
 internal sealed class RuntimeScope : IDisposable
 {
     static readonly AsyncLocal<RuntimeScope?> current = new();
     readonly RuntimeScope? previous;
+    readonly HashSet<(Guid, string)> allowed = [];
     volatile bool disposed;
 
     RuntimeScope(DbContext context, RuntimeScope? previous) => (Context, this.previous) = (context, previous);
@@ -63,6 +65,12 @@ internal sealed class RuntimeScope : IDisposable
     public static bool Allows(DbContext? context) => context != null && ReferenceEquals(Current?.Context, context);
 
     public static RuntimeScope Open(DbContext context) => current.Value = new RuntimeScope(context, current.Value);
+
+    /// <summary>Exempts exactly this subject member from StateLockGuard for this scope's saves (one pair per SetField).</summary>
+    public void Allow(Guid subjectId, string member) { lock (allowed) allowed.Add((subjectId, member)); }
+
+    /// <summary>True when <see cref="Allow"/> recorded this pair and the scope is still open.</summary>
+    public bool IsAllowed(Guid subjectId, string member) { lock (allowed) return !disposed && allowed.Contains((subjectId, member)); }
 
     public void Dispose()
     {
