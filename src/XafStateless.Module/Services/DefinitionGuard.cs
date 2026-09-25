@@ -117,8 +117,7 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
                 throw Refuse($"the definition is {row.State}; its states, effects and transitions cannot change. Create a new draft.");
             if (!trackedDefinitions.TryGetValue(id, out var owner)) throw Refuse("the definition cannot be read.");
             // Touch writes original+1 with the original in the UPDATE's WHERE: the original must be the version whose State we just read.
-            if ((int)owner.Property(LockField).OriginalValue! != row.Version)
-                throw new DbUpdateConcurrencyException("The workflow definition changed meanwhile.");
+            SameVersion(owner, row.Version);
             if (owner.State is EntityState.Unchanged or EntityState.Modified) Concurrency.Touch(owner);
         }
 
@@ -134,6 +133,7 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
             return;
         }
         var persisted = persistedRows.TryGetValue(d.ID, out var row) ? row.State : throw Refuse($"'{d.Name}' v{d.Version} does not exist.");
+        SameVersion(e, row.Version);   // the State just read belongs to the version this entry's UPDATE is conditioned on
         var modified = e.Properties.Where(p => p.IsModified && p.Metadata.Name != LockField).Select(p => p.Metadata.Name).ToList();
         // A deletion: EF Deleted, or XAF deferred deletion's Modified with GCRecord going from unset to set.
         // A GCRecord merely marked modified is not a deletion; the lifecycle rules below run for every entry regardless.
@@ -190,6 +190,15 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         if (e.State == EntityState.Modified && current != stored)
             throw Refuse("a state, effect or transition cannot move to another parent.");
         return stored;
+    }
+
+    public const string ChangedMeanwhile = "The workflow definition changed meanwhile.";
+
+    /// <summary>The raw-read State is only meaningful for the version the entry was loaded at (its UPDATE's WHERE uses the
+    /// original version); a different stored version means another writer got there first: a lost race, before any SQL runs.</summary>
+    static void SameVersion(EntityEntry<WorkflowDefinition> e, int storedVersion)
+    {
+        if ((int)e.Property(LockField).OriginalValue! != storedVersion) throw new DbUpdateConcurrencyException(ChangedMeanwhile);
     }
 
     static bool IsUnset(object? v) => v is null or "" || (v is Guid g && g == Guid.Empty);

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.EFCore;
 using Microsoft.EntityFrameworkCore;
+using System.Transactions;
 using XafStateless.Engine;
 using XafStateless.Module.BusinessObjects;
 
@@ -10,7 +11,7 @@ namespace XafStateless.Module.Services;
 /// <summary>Singleton. Published and Retired definitions never change (DefinitionGuard), so their snapshots are cached
 /// by id with no invalidation. A snapshot is built from the database rows (<see cref="RawSql"/>), never from the object
 /// space's tracked entities, which may hold unsaved or rolled-back state. It is cached only when read outside any
-/// transaction (so it is committed data) and the definition is not a Draft.</summary>
+/// transaction (a DbTransaction, an ambient or an explicitly enlisted System.Transactions one) (so it is committed data) and the definition is not a Draft.</summary>
 public sealed class DefinitionStore
 {
     readonly ConcurrentDictionary<Guid, WorkflowDef> cache = new();
@@ -26,7 +27,8 @@ public sealed class DefinitionStore
     public WorkflowDefinition? Published(IObjectSpace os, string name) =>
         os.FirstOrDefault<WorkflowDefinition>(d => d.Name == name && d.State == DefinitionState.Published);
 
-    static bool InTransaction(DbContext ctx) => System.Transactions.Transaction.Current != null || ctx.Database.CurrentTransaction != null;
+    static bool InTransaction(DbContext ctx) =>
+        System.Transactions.Transaction.Current != null || ctx.Database.CurrentTransaction != null || ctx.Database.GetEnlistedTransaction() != null;
 
     static (WorkflowDef Def, DefinitionState State) Read(DbContext ctx, Guid id)
     {

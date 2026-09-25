@@ -7,6 +7,7 @@ using DevExpress.Persistent.Base;
 using DevExpress.Persistent.BaseImpl.EF.PermissionPolicy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using System.Transactions;
 using XafStateless.Demo.Module.BusinessObjects;
 using XafStateless.Engine;
 using XafStateless.Module.BusinessObjects;
@@ -554,27 +555,7 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
     {
         var published = PublishNew(Unique());
         var draft = CommittedDraft();
-        var userName = $"u{Guid.NewGuid():N}";
-        using (var os = db.NewObjectSpace())
-        {
-            // A designer role whose State member is read-denied: a secured LINQ read would see default(State) = Draft.
-            var role = os.CreateObject<PermissionPolicyRole>();
-            role.Name = userName;
-            foreach (var t in new[] { typeof(WorkflowDefinition), typeof(WorkflowState), typeof(WorkflowTransition), typeof(WorkflowEffect) })
-                role.AddTypePermission(t, SecurityOperations.CRUDAccess, SecurityPermissionState.Allow);
-            role.AddMemberPermission<WorkflowDefinition>(SecurityOperations.Read, nameof(WorkflowDefinition.State), null, SecurityPermissionState.Deny);
-            var user = os.CreateObject<ApplicationUser>(); user.UserName = userName; user.SetPassword(""); user.Roles.Add(role);
-            os.CommitChanges();
-            ((ISecurityUserWithLoginInfo)user).CreateUserLoginInfo(SecurityDefaults.PasswordAuthentication, os.GetKeyValueAsString(user));
-            os.CommitChanges();
-        }
-        // Built as the Task 4b spike builds a user's space (AddSecuredEFCore equivalent); the demo DbContext adds the guard itself.
-        var auth = new AuthenticationStandard();
-        var security = new SecurityStrategyComplex(typeof(ApplicationUser), typeof(PermissionPolicyRole), auth);
-        using var provider = new SecuredEFCoreObjectSpaceProvider<DemoEFCoreDbContext>(security, XafTypesInfo.Instance, db.ConnectionString,
-            (builder, cs) => { builder.UseConnectionString(cs); builder.AddInterceptors(new EFCoreOptimisticLockInterceptor()); });
-        auth.SetLogonParameters(new AuthenticationStandardLogonParameters(userName, ""));
-        using (var logon = ((INonsecuredObjectSpaceProvider)provider).CreateNonsecuredObjectSpace()) security.Logon(logon);
+        using var provider = StateMaskedDesigner();
 
         using (var user = provider.CreateObjectSpace())
         {
@@ -592,6 +573,109 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         using var check = db.NewObjectSpace();
         Assert.Equal("draft", check.GetObjectByKey<WorkflowDefinition>(published).InitialStateKey);
         Assert.Contains(check.GetObjectByKey<WorkflowDefinition>(draft).Transitions, t => t.Trigger == "decline");
+    }
+
+    /// <summary>A secured provider logged on as a designer role whose State member is read-denied: a secured LINQ read
+    /// sees default(State) = Draft. Built as the Task 4b spike builds a user's space; the demo DbContext adds the guard itself.</summary>
+    SecuredEFCoreObjectSpaceProvider<DemoEFCoreDbContext> StateMaskedDesigner()
+    {
+        var userName = $"u{Guid.NewGuid():N}";
+        using (var os = db.NewObjectSpace())
+        {
+            var role = os.CreateObject<PermissionPolicyRole>();
+            role.Name = userName;
+            foreach (var t in new[] { typeof(WorkflowDefinition), typeof(WorkflowState), typeof(WorkflowTransition), typeof(WorkflowEffect) })
+                role.AddTypePermission(t, SecurityOperations.CRUDAccess, SecurityPermissionState.Allow);
+            role.AddMemberPermission<WorkflowDefinition>(SecurityOperations.Read, nameof(WorkflowDefinition.State), null, SecurityPermissionState.Deny);
+            var user = os.CreateObject<ApplicationUser>(); user.UserName = userName; user.SetPassword(""); user.Roles.Add(role);
+            os.CommitChanges();
+            ((ISecurityUserWithLoginInfo)user).CreateUserLoginInfo(SecurityDefaults.PasswordAuthentication, os.GetKeyValueAsString(user));
+            os.CommitChanges();
+        }
+        var auth = new AuthenticationStandard();
+        var security = new SecurityStrategyComplex(typeof(ApplicationUser), typeof(PermissionPolicyRole), auth);
+        var provider = new SecuredEFCoreObjectSpaceProvider<DemoEFCoreDbContext>(security, XafTypesInfo.Instance, db.ConnectionString,
+            (builder, cs) => { builder.UseConnectionString(cs); builder.AddInterceptors(new EFCoreOptimisticLockInterceptor()); });
+        auth.SetLogonParameters(new AuthenticationStandardLogonParameters(userName, ""));
+        using (var logon = ((INonsecuredObjectSpaceProvider)provider).CreateNonsecuredObjectSpace()) security.Logon(logon);
+        return provider;
+    }
+
+    // ---- Fix round 3 ----
+
+    [Fact] public void Secured_child_edit_on_published_is_refused()
+    {
+        var published = PublishNew(Unique());
+        using var provider = StateMaskedDesigner();
+        using (var user = provider.CreateObjectSpace())
+        {
+            var d = user.GetObjectByKey<WorkflowDefinition>(published);
+            Assert.Equal(DefinitionState.Draft, d.State);                             // masked
+            d.Transitions.Single(t => t.Trigger == "reject").Trigger = "hacked";
+            Guarded(() => user.CommitChanges());
+        }
+        using (var user = provider.CreateObjectSpace())
+        {
+            var effect = user.GetObjectByKey<WorkflowDefinition>(published).States.Single(s => s.Key == "ordered").Effects[0];
+            effect.Value = "false";
+            Guarded(() => user.CommitChanges());
+        }
+        using (var user = provider.CreateObjectSpace())
+        {
+            S(user, user.GetObjectByKey<WorkflowDefinition>(published), "extra", StateKind.Final);
+            Guarded(() => user.CommitChanges());
+        }
+        using var check = db.NewObjectSpace();
+        var saved = check.GetObjectByKey<WorkflowDefinition>(published);
+        Assert.DoesNotContain(saved.Transitions, t => t.Trigger == "hacked");
+        Assert.DoesNotContain(saved.States, s => s.Key == "extra");
+        Assert.Equal("true", saved.States.Single(s => s.Key == "ordered").Effects.Single(e => e.Kind == EffectKind.SetField).Value);
+    }
+
+    [Fact] public void Stale_definition_edit_loses_before_any_sql()
+    {
+        var d = CommittedDraft();
+        using var stale = db.NewObjectSpace();
+        var def = stale.GetObjectByKey<WorkflowDefinition>(d);
+        using (var other = db.NewObjectSpace())
+        {
+            other.GetObjectByKey<WorkflowDefinition>(d).InitialStateKey = "review";
+            other.CommitChanges();
+        }
+        def.Version = 7;                                                              // a header edit from a stale load
+        var ex = Assert.Throws<UserFriendlyException>(() => stale.CommitChanges());
+        Assert.True(LostRace.Is(ex), ex.ToString());
+        // The guard's version check fired (its message), not EF's UPDATE affecting 0 rows afterwards.
+        Assert.Equal(DefinitionGuard.ChangedMeanwhile, Assert.IsType<DbUpdateConcurrencyException>(ex.InnerException).Message);
+    }
+
+    [Fact] public void Store_does_not_cache_inside_an_enlisted_transaction()
+    {
+        var store = new DefinitionStore();
+        var d = CommittedDraft();
+        using (var os = db.NewObjectSpace())
+        using (var committable = new System.Transactions.CommittableTransaction())
+        {
+            var database = ((DevExpress.ExpressApp.EFCore.EFCoreObjectSpace)os).DbContext.Database;
+            database.OpenConnection();                                                // enlisting needs an open connection
+            database.EnlistTransaction(committable);
+            Assert.Null(System.Transactions.Transaction.Current);                    // explicit enlistment, no ambient scope
+            using (DefinitionGuard.AllowPublishing(d, null))
+            {
+                os.GetObjectByKey<WorkflowDefinition>(d).State = DefinitionState.Published;
+                os.CommitChanges();
+            }
+            Assert.Contains(store.Get(os, d).Transitions, t => t.Trigger == "reject");
+            committable.Rollback();                                                   // never published after all
+            database.CloseConnection();
+        }
+        using (var edit = db.NewObjectSpace())
+        {
+            edit.GetObjectByKey<WorkflowDefinition>(d).Transitions.Single(t => t.Trigger == "reject").Trigger = "decline";
+            edit.CommitChanges();
+        }
+        using var fresh = db.NewObjectSpace();
+        Assert.Contains(store.Get(fresh, d).Transitions, t => t.Trigger == "decline");
     }
 
     sealed class FakeClock : TimeProvider;
