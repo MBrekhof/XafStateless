@@ -108,6 +108,12 @@ public class WorkflowValidatorTests
         Assert.Contains(V(d), e => e.Contains("decision 'decide-amount' needs a final else-branch without criteria"));
     }
 
+    [Fact] public void Decision_branch_without_criteria()
+    {
+        var d = Pr with { Transitions = Pr.Transitions.Select(t => t.Trigger == "Large" ? t with { Criteria = null } : t).ToList() };
+        Assert.Contains(V(d), e => e.Contains("decision 'decide-amount' branch 'Large' needs criteria"));
+    }
+
     [Fact] public void Decision_duplicate_order_is_refused()
     {
         var d = Pr with { Transitions = Pr.Transitions.Select(t => t.Trigger == "Small" ? t with { Order = 0 } : t).ToList() };
@@ -163,7 +169,7 @@ public class WorkflowValidatorTests
 
     [Fact] public void Transition_role_must_exist()
     {
-        var d = Pr with { Transitions = Pr.Transitions.Select(t => t.Trigger == "Approve" ? t with { RequiredRole = "Ghosts" } : t).ToList() };
+        var d = Pr with { Transitions = Pr.Transitions.Select(t => t.Trigger == "Submit" ? t with { RequiredRole = "Ghosts" } : t).ToList() };
         Assert.Contains(V(d), e => e.Contains("role 'Ghosts' does not exist"));
     }
 }
