@@ -16,6 +16,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The engine's purchase-request fixture, shared rather than re-typed. -->
+    <Compile Include="..\XafStateless.Engine.Tests\Fixtures.cs" Link="Fixtures.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\XafStateless.Module\XafStateless.Module.csproj" />
     <ProjectReference Include="..\..\demo\XafStateless.Demo.Module\XafStateless.Demo.Module.csproj" />
   </ItemGroup>

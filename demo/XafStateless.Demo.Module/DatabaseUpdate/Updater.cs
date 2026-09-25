@@ -115,23 +115,7 @@ public class Updater : ModuleUpdater {
     void SeedPurchaseRequestWorkflow() {
         var def = PurchaseRequestWorkflow;
         if(ObjectSpace.FirstOrDefault<WorkflowDefinition>(d => d.Name == def.Name) != null) return;
-        var d = ObjectSpace.CreateObject<WorkflowDefinition>();
-        (d.Name, d.TargetTypeName, d.Version, d.State, d.InitialStateKey) = (def.Name, typeof(PurchaseRequest).FullName!, def.Version, DefinitionState.Draft, def.InitialState);
-        foreach(var s in def.States) {
-            var state = ObjectSpace.CreateObject<WorkflowState>();
-            (state.Key, state.Caption, state.Kind, state.TaskRole, state.WaitMinutes) = (s.Key, s.Caption, s.Kind, s.TaskRole, s.WaitMinutes);
-            foreach(var e in s.Effects) {
-                var effect = ObjectSpace.CreateObject<WorkflowEffect>();
-                (effect.Order, effect.Kind, effect.Target, effect.Value) = (state.Effects.Count, e.Kind, e.Target, e.Value);
-                state.Effects.Add(effect);
-            }
-            d.States.Add(state);
-        }
-        foreach(var t in def.Transitions) {
-            var tr = ObjectSpace.CreateObject<WorkflowTransition>();
-            (tr.FromKey, tr.Trigger, tr.ToKey, tr.Criteria, tr.RequiredRole, tr.Order) = (t.From, t.Trigger, t.To, t.Criteria, t.RequiredRole, t.Order);
-            d.Transitions.Add(tr);
-        }
+        var d = DefinitionMapper.ToDraft(ObjectSpace, def, typeof(PurchaseRequest).FullName!);
         ObjectSpace.CommitChanges();   // Publish needs a saved draft and nothing else pending
         var r = ObjectSpace.ServiceProvider.GetRequiredService<DefinitionService>().Publish(ObjectSpace, d, "setup", WorkflowRoleCatalog.Names(ObjectSpace));
         if(!r.Ok) throw new InvalidOperationException("Seeding the purchase-request workflow failed: " + string.Join("; ", r.Messages));

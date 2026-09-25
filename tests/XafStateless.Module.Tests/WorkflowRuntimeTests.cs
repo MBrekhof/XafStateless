@@ -96,26 +96,7 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
     Guid Publish(WorkflowDef def)
     {
         using var os = db.NewObjectSpace();
-        var d = os.CreateObject<WorkflowDefinition>();
-        (d.Name, d.TargetTypeName, d.Version, d.State, d.InitialStateKey) = (def.Name, typeof(PurchaseRequest).FullName!, 1, DefinitionState.Draft, def.InitialState);
-        foreach (var s in def.States)
-        {
-            var state = os.CreateObject<WorkflowState>();
-            (state.Key, state.Caption, state.Kind, state.TaskRole, state.WaitMinutes) = (s.Key, s.Caption, s.Kind, s.TaskRole, s.WaitMinutes);
-            foreach (var e in s.Effects)
-            {
-                var effect = os.CreateObject<WorkflowEffect>();
-                (effect.Order, effect.Kind, effect.Target, effect.Value) = (state.Effects.Count, e.Kind, e.Target, e.Value);
-                state.Effects.Add(effect);
-            }
-            d.States.Add(state);
-        }
-        foreach (var t in def.Transitions)
-        {
-            var tr = os.CreateObject<WorkflowTransition>();
-            (tr.FromKey, tr.Trigger, tr.ToKey, tr.Criteria, tr.RequiredRole, tr.Order) = (t.From, t.Trigger, t.To, t.Criteria, t.RequiredRole, t.Order);
-            d.Transitions.Add(tr);
-        }
+        var d = DefinitionMapper.ToDraft(os, def, typeof(PurchaseRequest).FullName!);
         os.CommitChanges();
         var r = new DefinitionService(new DefinitionStore()).Publish(os, d, "tester", Roles());
         Assert.True(r.Ok, string.Join("; ", r.Messages));

@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using DevExpress.Persistent.BaseImpl.EF.PermissionPolicy;
 using XafStateless.Demo.Module.BusinessObjects;
 using XafStateless.Engine;
+using XafStateless.Engine.Tests;
 using XafStateless.Module.BusinessObjects;
 using XafStateless.Module.Services;
 
@@ -15,7 +16,7 @@ namespace XafStateless.Module.Tests;
 /// logged on as an approver and as a designer.</summary>
 public class PermissionTests : IClassFixture<TestDb>
 {
-    const string Approver = "approver", Designer = "designer";
+    const string Approver = "approver", Designer = "designer", Others = "Others";
     readonly TestDb db;
     readonly WorkflowRuntime rt = new(new DefinitionStore(), TimeProvider.System);
     readonly DefinitionService svc = new(new DefinitionStore());
@@ -28,6 +29,7 @@ public class PermissionTests : IClassFixture<TestDb>
         var approvers = os.CreateObject<PermissionPolicyRole>();
         approvers.Name = "Approvers";
         WorkflowPermissions.GrantParticipant(approvers, (typeof(PurchaseRequest), "PurchaseRequest_ListView"));
+        os.CreateObject<PermissionPolicyRole>().Name = Others;   // addressee of tasks the approver must not see
         var designers = os.CreateObject<PermissionPolicyRole>();
         designers.Name = "WorkflowDesigners";
         WorkflowPermissions.GrantDesigner(designers);
@@ -65,31 +67,16 @@ public class PermissionTests : IClassFixture<TestDb>
     }
 
     /// <summary>The engine's purchase-request fixture, published under a unique name through non-secured entities.</summary>
-    string PublishPurchaseRequest()
+    string PublishPurchaseRequest() => Publish(Fixtures.PurchaseRequest() with { Name = $"pr-{Guid.NewGuid():N}" });
+
+    string Publish(WorkflowDef def)
     {
-        var name = $"pr-{Guid.NewGuid():N}";
         using var os = db.NewObjectSpace();
-        var d = os.CreateObject<WorkflowDefinition>();
-        (d.Name, d.TargetTypeName, d.Version, d.State, d.InitialStateKey) = (name, typeof(PurchaseRequest).FullName!, 1, DefinitionState.Draft, "draft");
-        State(os, d, "draft", StateKind.Manual);
-        State(os, d, "approval", StateKind.Task, "Approvers");
-        State(os, d, "decide-amount", StateKind.Decision);
-        State(os, d, "wait-cooling", StateKind.Wait).WaitMinutes = 1;
-        var ordered = State(os, d, "ordered", StateKind.Final);
-        var set = os.CreateObject<WorkflowEffect>();
-        (set.Kind, set.Target, set.Value) = (EffectKind.SetField, "Ordered", "true");
-        ordered.Effects.Add(set);
-        State(os, d, "rejected", StateKind.Final);
-        Transition(os, d, "draft", "Submit", "approval");
-        Transition(os, d, "approval", "Approve", "decide-amount");
-        Transition(os, d, "approval", "Reject", "rejected");
-        Transition(os, d, "decide-amount", "Large", "wait-cooling").Criteria = "Amount > 1000";
-        Transition(os, d, "decide-amount", "Small", "ordered").Order = 1;
-        Transition(os, d, "wait-cooling", "Cooled", "ordered");
+        var d = DefinitionMapper.ToDraft(os, def, typeof(PurchaseRequest).FullName!);
         os.CommitChanges();
         var r = svc.Publish(os, d, "tester", Roles());
         Assert.True(r.Ok, string.Join("; ", r.Messages));
-        return name;
+        return def.Name;
     }
 
     static WorkflowState State(IObjectSpace os, WorkflowDefinition d, string key, StateKind kind, string? role = null)
@@ -185,7 +172,7 @@ public class PermissionTests : IClassFixture<TestDb>
         using var user = provider.CreateObjectSpace();
         var d = user.CreateObject<WorkflowDefinition>();
         (d.Name, d.TargetTypeName, d.Version) = ($"x-{Guid.NewGuid():N}", typeof(PurchaseRequest).FullName!, 1);
-        Assert.ThrowsAny<Exception>(() => user.CommitChanges());
+        Assert.Contains("prohibited by security rules", Assert.ThrowsAny<Exception>(() => user.CommitChanges()).Message);
         using var check = db.NewObjectSpace();
         Assert.Null(check.FirstOrDefault<WorkflowDefinition>(x => x.Name == d.Name));
     }
@@ -226,5 +213,75 @@ public class PermissionTests : IClassFixture<TestDb>
         Assert.True(r.Ok, string.Join("; ", r.Messages));
         using var check = db.NewObjectSpace();
         Assert.Equal(DefinitionState.Published, check.FirstOrDefault<WorkflowDefinition>(x => x.Name == name)!.State);
+    }
+
+    [Fact] public void Approver_reads_only_own_role_tasks_and_notifications()
+    {
+        // Another role's task + notification: started and submitted by a caller in that role.
+        var name = Publish(new WorkflowDef($"o-{Guid.NewGuid():N}", 1, "draft",
+            [
+                new("draft", "Draft", StateKind.Manual),
+                new("review", "Review", StateKind.Task, TaskRole: Others, OnEntry: [new(EffectKind.Notify, Others, "Review {Title}")]),
+                new("done", "Done", StateKind.Final),
+            ],
+            [new("draft", "Submit", "review"), new("review", "Approve", "done")]));
+        Guid foreignRequest;
+        using (var os = db.NewObjectSpace())
+        {
+            var pr = os.CreateObject<PurchaseRequest>();
+            pr.Title = "Foreign";
+            os.CommitChanges();
+            foreignRequest = pr.ID;
+        }
+        var other = db.Caller("other", Others);
+        Ok(rt.Start(other, typeof(PurchaseRequest), foreignRequest, name));
+        Ok(rt.Fire(other, typeof(PurchaseRequest), foreignRequest, "Submit"));
+        Guid foreignTask, foreignNote;
+        using (var os = db.NewObjectSpace())
+        {
+            foreignTask = os.GetObjectsQuery<WorkflowTask>().Single(t => t.Instance!.SubjectId == foreignRequest).ID;
+            foreignNote = os.GetObjectsQuery<WorkflowNotification>().Single(n => n.Instance!.SubjectId == foreignRequest).ID;
+        }
+
+        using var provider = LogOn(Approver);
+        Guid ownRequest, ownTask;
+        using (var user = provider.CreateObjectSpace()) (ownRequest, ownTask) = Submitted(user);
+        using (var user = provider.CreateObjectSpace())
+        {
+            Assert.Null(user.GetObjectByKey<WorkflowTask>(foreignTask));
+            Assert.Empty(user.GetObjectsQuery<WorkflowTask>().Where(t => t.ID == foreignTask).ToList());
+            Assert.Null(user.GetObjectByKey<WorkflowNotification>(foreignNote));
+            Assert.Empty(user.GetObjectsQuery<WorkflowNotification>().Where(n => n.Role == Others).ToList());
+
+            Assert.NotNull(user.GetObjectByKey<WorkflowTask>(ownTask));                       // its own role's rows stay readable
+            Assert.All(user.GetObjectsQuery<WorkflowTask>().ToList(), t => Assert.Equal("Approvers", t.Role));
+            Assert.Contains(user.GetObjectsQuery<WorkflowNotification>().ToList(), n => n.Instance!.SubjectId == ownRequest);
+        }
+        // The runtime still decides for the approver through its secured read proof.
+        using (var user = provider.CreateObjectSpace())
+            Ok(rt.Decide(Caller(user, Approver, "Approvers"), ownTask, "Approve"));
+    }
+
+    [Fact] public void Approver_reads_only_instances_of_granted_subject_types()
+    {
+        var name = PublishPurchaseRequest();
+        Guid foreignInstance;
+        using (var os = db.NewObjectSpace())
+        {
+            var i = os.CreateObject<WorkflowInstance>();
+            (i.Definition, i.SubjectType, i.SubjectId, i.StateKey) =
+                (os.FirstOrDefault<WorkflowDefinition>(d => d.Name == name), "Some.Other.Subject", Guid.NewGuid(), "draft");
+            using (RuntimeScope.Open(((DevExpress.ExpressApp.EFCore.EFCoreObjectSpace)os).DbContext)) os.CommitChanges();   // instances are runtime-created
+            foreignInstance = i.ID;
+        }
+        using var provider = LogOn(Approver);
+        Guid ownRequest;
+        using (var user = provider.CreateObjectSpace()) (ownRequest, _) = Submitted(user);
+        using (var user = provider.CreateObjectSpace())
+        {
+            Assert.Null(user.GetObjectByKey<WorkflowInstance>(foreignInstance));
+            Assert.Empty(user.GetObjectsQuery<WorkflowInstance>().Where(i => i.SubjectType == "Some.Other.Subject").ToList());
+            Assert.NotNull(user.GetObjectByKey<PurchaseRequest>(ownRequest).Workflow);             // its own subject's instance
+        }
     }
 }

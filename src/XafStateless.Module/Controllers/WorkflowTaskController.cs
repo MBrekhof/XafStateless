@@ -31,6 +31,7 @@ public sealed class WorkflowTaskController : ObjectViewController<DetailView, Wo
     {
         base.OnActivated();
         runtime = Application.ServiceProvider.GetRequiredService<WorkflowRuntime>();
+        View.AllowEdit["RuntimeOwned"] = false;   // tasks change only through Decide (the guard refuses any other write, for every role)
         View.CurrentObjectChanged += View_CurrentObjectChanged;
         Refill();
     }
@@ -38,6 +39,7 @@ public sealed class WorkflowTaskController : ObjectViewController<DetailView, Wo
     protected override void OnDeactivated()
     {
         View.CurrentObjectChanged -= View_CurrentObjectChanged;
+        View.AllowEdit.RemoveItem("RuntimeOwned");
         runtime = null;
         base.OnDeactivated();
     }
