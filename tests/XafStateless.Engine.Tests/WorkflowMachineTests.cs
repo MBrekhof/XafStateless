@@ -83,4 +83,39 @@ public class WorkflowMachineTests
         Assert.Single(steps);
         Assert.Contains("'Cooled' is not possible from 'approval'", err);
     }
+
+    // 33 Decision states chained a0 -> a1 -> ... -> a33 (each one unguarded transition; a33 Final).
+    // MaxDecisionDepth is 32, so entering the initial state alone (a0..a32, 33 decisions) overruns it.
+    static WorkflowDef DeepDecisionChain()
+    {
+        var states = Enumerable.Range(0, 33).Select(i => new StateDef($"a{i}", $"a{i}", StateKind.Decision))
+            .Append(new StateDef("a33", "a33", StateKind.Final)).ToList();
+        var transitions = Enumerable.Range(0, 33).Select(i => new TransitionDef($"a{i}", "Next", $"a{i + 1}")).ToList();
+        return new WorkflowDef("deep", 1, "a0", states, transitions);
+    }
+
+    [Fact] public void Dry_run_does_not_throw_past_decision_depth_cap()
+    {
+        var (_, err) = WorkflowDryRun.Run(DeepDecisionChain(), [], _ => true);
+        Assert.NotNull(err);
+    }
+
+    [Fact] public void Decision_chain_past_max_depth_throws()
+    {
+        var s = "a0";
+        var m = new WorkflowMachine(DeepDecisionChain(), () => s, v => s = v, _ => true);
+        var ex = Assert.Throws<InvalidOperationException>(() => m.EnterInitial());
+        Assert.Contains($"exceeded {WorkflowMachine.MaxDecisionDepth}", ex.Message);
+    }
+
+    [Fact] public void Mermaid_tolerates_duplicate_keys_and_missing_initial_state()
+    {
+        var def = new WorkflowDef("broken", 1, "nope",
+            [new("a", "First", StateKind.Manual), new("a", "Second", StateKind.Final)], []);
+
+        var mermaid = WorkflowMermaid.Format(def);
+
+        Assert.Equal(1, mermaid.Split('\n').Count(l => l.StartsWith("    state \"")));
+        Assert.DoesNotContain("[*] -->", mermaid);
+    }
 }

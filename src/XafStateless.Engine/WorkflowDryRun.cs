@@ -7,17 +7,16 @@ public static class WorkflowDryRun
     {
         var state = def.InitialState;
         var machine = new WorkflowMachine(def, () => state, v => state = v, criteria);
-        var steps = new List<Step>(machine.EnterInitial());
-        foreach (var trigger in triggers)
+        var steps = new List<Step>();
+        try
         {
-            try
-            {
+            steps.AddRange(machine.EnterInitial());
+            foreach (var trigger in triggers)
                 steps.AddRange(machine.Fire(trigger));
-            }
-            catch (InvalidOperationException ex)
-            {
-                return (steps, ex.Message);
-            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            return (steps, ex.Message);
         }
         return (steps, null);
     }
