@@ -1,5 +1,6 @@
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.EFCore;
+using DevExpress.ExpressApp.EFCore.DataLocking;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using XafStateless.Demo.Module.BusinessObjects;
@@ -19,8 +20,15 @@ public sealed class TestDb : IDisposable
     {
         ConnectionString = $"{Server};Initial Catalog={DatabaseName}";
         // Same options as the demo's WithDbContext: UseConnectionString adds the SQL Server provider plus
-        // change-tracking, object-space-link and lazy-loading proxies.
-        provider = new EFCoreObjectSpaceProvider<DemoEFCoreDbContext>((builder, _) => builder.UseConnectionString(ConnectionString));
+        // change-tracking, object-space-link and lazy-loading proxies. AddEFCore/AddSecuredEFCore also add XAF's
+        // optimistic-lock interceptor (it bumps OptimisticLockField on save); this ctor does not, so add it here --
+        // without it a lost race is a silent last-writer-wins (Task 4b). Lock options: the demo sets none, so the
+        // provider defaults (AllFields + Merge) apply here too.
+        provider = new EFCoreObjectSpaceProvider<DemoEFCoreDbContext>((builder, _) =>
+        {
+            builder.UseConnectionString(ConnectionString);
+            builder.AddInterceptors(new EFCoreOptimisticLockInterceptor());
+        });
         using var ctx = NewDbContext();
         ctx.Database.EnsureCreated();
     }
