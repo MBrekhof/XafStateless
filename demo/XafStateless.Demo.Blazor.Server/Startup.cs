@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Components.Server.Circuits;
 using Microsoft.EntityFrameworkCore;
 using XafStateless.Demo.Blazor.Server.Services;
+using XafStateless.Module;
 using DevExpress.Persistent.BaseImpl.EF.PermissionPolicy;
 
 namespace XafStateless.Demo.Blazor.Server;
@@ -27,6 +28,7 @@ public class Startup {
         services.AddServerSideBlazor();
         services.AddHttpContextAccessor();
         services.AddScoped<CircuitHandler, CircuitHandlerProxy>();
+        services.AddXafStateless();
         services.AddXaf(Configuration, builder => {
             builder.UseApplication<DemoBlazorApplication>();
             builder.Modules

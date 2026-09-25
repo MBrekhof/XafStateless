@@ -7,6 +7,8 @@ using DevExpress.ExpressApp.Design;
 using DevExpress.ExpressApp.EFCore.DesignTime;
 using XafStateless.Module;
 using XafStateless.Module.BusinessObjects;
+using XafStateless.Module.Services;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace XafStateless.Demo.Module.BusinessObjects;
 
@@ -29,6 +31,12 @@ public class DemoEFCoreDbContext : DbContext {
     public DbSet<WorkflowTask> WorkflowTasks { get; set; }
     public DbSet<WorkflowNotification> WorkflowNotifications { get; set; }
     public DbSet<PurchaseRequest> PurchaseRequests { get; set; }
+
+    // The definition guard runs for every context, whoever builds it (XAF provider, updater, tests).
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
+        if(optionsBuilder.Options.FindExtension<CoreOptionsExtension>()?.Interceptors?.Contains(DefinitionGuard.Instance) != true)
+            optionsBuilder.AddInterceptors(DefinitionGuard.Instance);
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
         base.OnModelCreating(modelBuilder);

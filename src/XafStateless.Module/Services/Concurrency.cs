@@ -17,6 +17,7 @@
 //   ONE SaveChanges pass that an EF SaveChangesInterceptor sees -- so Task 7b's guard gets its pass on the final save.
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.DataLocking;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace XafStateless.Module.Services;
 
@@ -24,4 +25,14 @@ public static class Concurrency
 {
     /// <summary>Advances <paramref name="obj"/>'s optimistic-lock version on the next commit of <paramref name="os"/> without changing any other property.</summary>
     public static void Touch(IObjectSpace os, object obj) => ((IOptimisticLock)obj).OptimisticLockField++;
+
+    /// <summary>The DbContext form, for SaveChanges interceptors: writes original+1, exactly what XAF's
+    /// EFCoreOptimisticLockInterceptor writes for a Modified entry, so running before or after it neither loses
+    /// nor double-bumps the version. The UPDATE's concurrency check still uses the original value.</summary>
+    public static void Touch(EntityEntry entry)
+    {
+        var version = entry.Property(nameof(IOptimisticLock.OptimisticLockField));
+        version.CurrentValue = (int)version.OriginalValue! + 1;
+        version.IsModified = true;
+    }
 }
