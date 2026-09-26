@@ -21,6 +21,13 @@ The trial integration (plan `docs/superpowers/plans/2026-09-26-bpgdemo-trial.md`
   bpg WF-007 (hook bypass), JOBS-001 (job plumbing), AUTO-003 (outbox Name, unverified), CARD-1825 (tabs, second sighting).
 - Tests: Engine 37, Module 95.
 
+## BPG decision (2026-09-26)
+
+BPG adopts XafStateless as the workflow engine for generated apps (bpg WF-008, depends on WF-007). Automation rules stay
+for one-step "on save" logic; generated Stateless code and Elsa (bpg WF-001 to WF-006) are dropped. WF-008 lists the
+work: packaging, the hook bypass, skeleton wiring, the generator writing spec workflows as seeded definitions, and
+checking the WF-001/002 scenarios (parallel branch with join, compensation, attempt-limited loops) against this module.
+
 ## Decisions taken on your behalf (highlights)
 
 The full list with costs is in the final session message. The ones most worth a second look:
