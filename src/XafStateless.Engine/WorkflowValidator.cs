@@ -24,6 +24,15 @@ public static class WorkflowValidator
     public static IReadOnlyList<Finding> Check(WorkflowDef def, IWorkflowEnvironment env)
     {
         var errs = new List<Finding>();
+        // Required texts, checked here because validation also runs on unsaved edits, before XAF's required-field rules.
+        if (string.IsNullOrWhiteSpace(def.Name)) errs.Add(new("the definition has no name"));
+        foreach (var s in def.States)
+        {
+            if (string.IsNullOrWhiteSpace(s.Key)) errs.Add(new($"state '{s.Caption}' has no key"));
+            else if (string.IsNullOrWhiteSpace(s.Caption)) errs.Add(new($"state '{s.Key}' has no caption", s.Key));
+        }
+        foreach (var t in def.Transitions.Where(t => string.IsNullOrWhiteSpace(t.Trigger)))
+            errs.Add(new($"a transition from '{t.From}' has no action name", string.IsNullOrWhiteSpace(t.From) ? null : t.From));
         var keys = new HashSet<string>();
         foreach (var s in def.States) if (!keys.Add(s.Key)) errs.Add(new($"duplicate state '{s.Key}'", s.Key));
         if (!keys.Contains(def.InitialState)) errs.Add(new($"initial state '{def.InitialState}' does not exist"));

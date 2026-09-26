@@ -11,5 +11,15 @@
         </LayoutGroup>
       </Layout>
     </DetailView>
+    <DetailView Id="WorkflowInstance_DetailView">
+      <Items>
+        <DiagramViewItem Id="Diagram" IsNewNode="True" />
+      </Items>
+      <Layout>
+        <LayoutGroup Id="Main">
+          <LayoutItem Id="Diagram" ViewItem="Diagram" ShowCaption="False" Index="100" IsNewNode="True" />
+        </LayoutGroup>
+      </Layout>
+    </DetailView>
   </Views>
 </Application>

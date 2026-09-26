@@ -1,5 +1,6 @@
-using DevExpress.ExpressApp;
+﻿using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.Actions;
+using DevExpress.ExpressApp.Editors;
 using DevExpress.Persistent.Base;
 using Microsoft.Extensions.DependencyInjection;
 using XafStateless.Module.BusinessObjects;
@@ -17,6 +18,9 @@ public sealed class DefinitionController : ObjectViewController<DetailView, Work
     readonly SimpleAction newVersion, validate, publish;
     readonly PopupWindowShowAction dryRun;
     DefinitionService? svc;
+    IReadOnlyList<string> roles = [];
+    DefinitionResult? last;        // the latest validation of the current definition in this view (XSM-027)
+    bool validating, again;        // reentrancy: a change raised while validating reruns once afterwards
 
     public DefinitionController()
     {
@@ -38,12 +42,23 @@ public sealed class DefinitionController : ObjectViewController<DetailView, Work
         var designer = WorkflowCommand.RoleNames(Application).Intersect(DesignerRoles).Any();
         foreach (var a in Actions) a.Active["Designer"] = designer;
         View.CurrentObjectChanged += View_CurrentObjectChanged;
+        ObjectSpace.ObjectChanged += ObjectSpace_Changed;
+        ObjectSpace.ObjectDeleted += ObjectSpace_Changed;
+        ObjectSpace.Committed += ObjectSpace_Reset;
+        ObjectSpace.ModifiedChanged += ObjectSpace_Reset;   // a rollback clears Modified
+        ObjectSpace.Reloaded += ObjectSpace_Reset;
+        roles = Roles();
         UpdateState();
     }
 
     protected override void OnDeactivated()
     {
         View.CurrentObjectChanged -= View_CurrentObjectChanged;
+        ObjectSpace.ObjectChanged -= ObjectSpace_Changed;
+        ObjectSpace.ObjectDeleted -= ObjectSpace_Changed;
+        ObjectSpace.Committed -= ObjectSpace_Reset;
+        ObjectSpace.ModifiedChanged -= ObjectSpace_Reset;
+        ObjectSpace.Reloaded -= ObjectSpace_Reset;
         foreach (var a in Actions) a.Active.RemoveItem("Designer");
         View.AllowEdit.RemoveItem("NotDraft");
         View.AllowDelete.RemoveItem("NotDraft");
@@ -52,6 +67,8 @@ public sealed class DefinitionController : ObjectViewController<DetailView, Work
     }
 
     void View_CurrentObjectChanged(object? sender, EventArgs e) => UpdateState();
+    void ObjectSpace_Changed(object? sender, EventArgs e) => Revalidate();
+    void ObjectSpace_Reset(object? sender, EventArgs e) { roles = Roles(); UpdateState(); }
 
     void UpdateState()
     {
@@ -59,6 +76,47 @@ public sealed class DefinitionController : ObjectViewController<DetailView, Work
         View.AllowEdit["NotDraft"] = draft;
         View.AllowDelete["NotDraft"] = draft;
         publish.Enabled["Draft"] = draft;
+        Revalidate();
+    }
+
+    /// <summary>Validates the definition as it is on screen, saved or not, and shows the one result everywhere (XSM-027):
+    /// Publish and Dry run are enabled only when it is valid (the tooltip names the first finding), each state's problem
+    /// colors its row in the States list, and the diagram marks the problem states. The service re-validates on Publish and
+    /// Dry run regardless. Edits saved in a separate state or transition tab reach this view when it refreshes.</summary>
+    void Revalidate()
+    {
+        if (validating) { again = true; return; }
+        validating = true;
+        try
+        {
+            do
+            {
+                again = false;
+                var d = ViewCurrentObject;
+                last = d == null || svc == null ? null : svc.Validate(ObjectSpace, d, roles);
+                Show(d);
+            } while (again);
+        }
+        finally { validating = false; }
+    }
+
+    void Show(WorkflowDefinition? d)
+    {
+        var valid = last?.Ok == true;
+        var reason = valid || last == null ? null : $"Fix first: {last.Messages[0]}";
+        foreach (var a in new ActionBase[] { publish, dryRun })
+        {
+            a.Enabled["Valid"] = valid;
+            a.ToolTip = reason;
+        }
+        if (d != null)
+            foreach (var s in d.States)
+            {
+                var mine = last?.Findings?.Where(f => f.State == s.Key).Select(f => f.Message).ToList() ?? [];
+                StateProblems.Set(s, mine.Count == 0 ? null : string.Join("; ", mine));
+            }
+        foreach (var listener in View.Items.OfType<IDefinitionValidationListener>()) listener.OnValidated(last);
+        (View.FindItem(nameof(WorkflowDefinition.States)) as ListPropertyEditor)?.ListView?.Editor?.Refresh();
     }
 
     IReadOnlyList<string> Roles() => StringLookup.RoleNames(Application.ServiceProvider)();
@@ -83,11 +141,11 @@ public sealed class DefinitionController : ObjectViewController<DetailView, Work
         }
     }
 
+    /// <summary>Validates what is on screen; no save needed (XSM-027).</summary>
     void Validate_Execute(object? sender, SimpleActionExecuteEventArgs e)
     {
-        if (!WorkflowCommand.Save(Application, ObjectSpace)) return;
-        var r = svc!.Validate(ObjectSpace, ViewCurrentObject, Roles());
-        Show(r.Ok ? new(true, [$"'{ViewCurrentObject.Name}' v{ViewCurrentObject.Version} is valid."]) : r);
+        Revalidate();
+        Show(last is { Ok: true } ? new(true, [$"'{ViewCurrentObject.Name}' v{ViewCurrentObject.Version} is valid."]) : last!);
     }
 
     void Publish_Execute(object? sender, SimpleActionExecuteEventArgs e)
@@ -110,7 +168,7 @@ public sealed class DefinitionController : ObjectViewController<DetailView, Work
         e.CanCloseWindow = false;
         var p = (DryRunParameters)e.PopupWindowViewCurrentObject;
         if (!WorkflowCommand.Save(Application, ObjectSpace)) return;
-        var (steps, error) = svc!.DryRun(ViewCurrentObject, Split(p.Path), Split(p.TrueCriteria).ToHashSet());
+        var (steps, error) = svc!.DryRun(ObjectSpace, ViewCurrentObject, roles, Split(p.Path), Split(p.TrueCriteria).ToHashSet());
         p.Result = string.Join(Environment.NewLine, steps.Select(s => $"{s.From} --{s.Trigger}--> {s.To}")
             .Append(error == null ? "(end of path)" : $"refused: {error}"));
     }

@@ -5,7 +5,14 @@ using XafStateless.Module.BusinessObjects;
 
 namespace XafStateless.Module.Services;
 
-public sealed record DefinitionResult(bool Ok, IReadOnlyList<string> Messages);
+/// <summary>Findings carry the state they are about (XSM-027); null for results that are not validations.</summary>
+public sealed record DefinitionResult(bool Ok, IReadOnlyList<string> Messages, IReadOnlyList<Finding>? Findings = null);
+
+/// <summary>A view item that shows a definition's validation (the diagram); the definition's controller pushes each result.</summary>
+public interface IDefinitionValidationListener
+{
+    void OnValidated(DefinitionResult? result);
+}
 
 /// <summary>The definition lifecycle: new draft, validate, publish, dry run. DefinitionGuard enforces immutability underneath.</summary>
 public sealed class DefinitionService(DefinitionStore store)
@@ -59,9 +66,12 @@ public sealed class DefinitionService(DefinitionStore store)
     {
         var target = os.TypesInfo.FindTypeInfo(d.TargetTypeName);
         if (target?.Type == null || !target.Implements<IWorkflowSubject>())
-            return new(false, [$"target type '{d.TargetTypeName}' is not a workflow subject"]);
-        var errors = WorkflowValidator.Validate(DefinitionMapper.ToDef(d), new XafWorkflowEnvironment(roleNames, target));
-        return new(errors.Count == 0, errors);
+        {
+            var message = $"target type '{d.TargetTypeName}' is not a workflow subject";
+            return new(false, [message], [new Finding(message)]);
+        }
+        var findings = WorkflowValidator.Check(DefinitionMapper.ToDef(d, os), new XafWorkflowEnvironment(roleNames, target));
+        return new(findings.Count == 0, findings.Select(f => f.Message).ToArray(), findings);
     }
 
     /// <summary>Validate, then in ONE transaction inside AllowPublishing: retire the current Published, publish <paramref name="d"/>.
@@ -97,6 +107,12 @@ public sealed class DefinitionService(DefinitionStore store)
         return new(true, [$"'{d.Name}' v{d.Version} published."]);
     }
 
-    public (IReadOnlyList<Step> Steps, string? Error) DryRun(WorkflowDefinition d, IEnumerable<string> triggers, ISet<string> trueCriteria) =>
-        WorkflowDryRun.Run(DefinitionMapper.ToDef(d), triggers, trueCriteria.Contains);
+    /// <summary>Runs a path through the definition; refuses an invalid definition, as <see cref="Publish"/> does (XSM-027).</summary>
+    public (IReadOnlyList<Step> Steps, string? Error) DryRun(IObjectSpace os, WorkflowDefinition d, IReadOnlyList<string> roleNames,
+        IEnumerable<string> triggers, ISet<string> trueCriteria)
+    {
+        var check = Validate(os, d, roleNames);
+        if (!check.Ok) return ([], $"the definition is not valid: {check.Messages[0]}");
+        return WorkflowDryRun.Run(DefinitionMapper.ToDef(d, os), triggers, trueCriteria.Contains);
+    }
 }

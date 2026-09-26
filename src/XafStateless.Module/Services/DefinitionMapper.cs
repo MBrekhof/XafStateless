@@ -1,4 +1,4 @@
-using DevExpress.ExpressApp;
+﻿using DevExpress.ExpressApp;
 using XafStateless.Engine;
 using XafStateless.Module.BusinessObjects;
 
@@ -6,11 +6,18 @@ namespace XafStateless.Module.Services;
 
 public static class DefinitionMapper
 {
-    /// <summary>Entities -> the engine's definition. Blank optional texts (a cleared editor) become null.</summary>
-    public static WorkflowDef ToDef(WorkflowDefinition d) => new(d.Name, d.Version, d.InitialStateKey,
-        d.States.Select(s => new StateDef(s.Key, s.Caption, s.Kind, Opt(s.TaskRole), s.WaitMinutes,
-            s.Effects.OrderBy(e => e.Order).Select(e => new EffectDef(e.Kind, e.Target, e.Value)).ToList(), Members(s.LockedMembers))).ToList(),
-        d.Transitions.Select(t => new TransitionDef(t.FromKey, t.Trigger, t.ToKey, Opt(t.Criteria), Opt(t.RequiredRole), t.Order)).ToList());
+    /// <summary>Entities -> the engine's definition. Blank optional texts (a cleared editor) become null. With
+    /// <paramref name="os"/>, children marked for deletion in it are left out (a live, unsaved editing session).</summary>
+    public static WorkflowDef ToDef(WorkflowDefinition d, IObjectSpace? os = null)
+    {
+        bool Live(object o) => os == null || !(os.IsObjectToDelete(o) || os.IsDeletedObject(o));   // before a commit only IsObjectToDelete is set
+        // A cleared editor leaves null in a required text; the engine gets "" and reports it, never a null (XSM-027).
+        static string Req(string? s) => s ?? "";
+        return new(Req(d.Name), d.Version, Req(d.InitialStateKey),
+            d.States.Where(Live).Select(s => new StateDef(Req(s.Key), Req(s.Caption), s.Kind, Opt(s.TaskRole), s.WaitMinutes,
+                s.Effects.Where(Live).OrderBy(e => e.Order).Select(e => new EffectDef(e.Kind, e.Target, e.Value)).ToList(), Members(s.LockedMembers))).ToList(),
+            d.Transitions.Where(Live).Select(t => new TransitionDef(Req(t.FromKey), Req(t.Trigger), Req(t.ToKey), Opt(t.Criteria), Opt(t.RequiredRole), t.Order)).ToList());
+    }
 
     /// <summary>The engine's definition -> a new Draft graph in <paramref name="os"/> (not committed), for seeding a host
     /// or a test; publish it through <see cref="DefinitionService.Publish"/>.</summary>

@@ -1,4 +1,4 @@
-using DevExpress.EntityFrameworkCore.Security;
+﻿using DevExpress.EntityFrameworkCore.Security;
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.DC;
 using DevExpress.ExpressApp.EFCore.DataLocking;
@@ -229,6 +229,47 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         string[] same = ["X.Request", "X.Request2"];   // same namespace, same caption: full names
         Assert.Equal(same, same.Select(s => WorkflowDefinition.SubjectCaption(s, same, _ => "Request")));
         Assert.Equal("X.NotASubject", WorkflowDefinition.SubjectCaption("X.NotASubject", same, Caption));
+    }
+
+    [Fact] public void Validate_returns_findings_tagged_with_their_state()   // XSM-027
+    {
+        using var os = db.NewObjectSpace();
+        var d = Draft(os, Unique());
+        d.Transitions.Remove(d.Transitions.Single(t => t.Trigger == "reject"));
+        var r = svc.Validate(os, d, Roles());
+        Assert.False(r.Ok);
+        Assert.Contains(r.Findings!, f => f.State == "rejected" && f.Message.StartsWith("'rejected' is unreachable"));
+        Assert.Equal(r.Messages, r.Findings!.Select(f => f.Message));
+    }
+
+    [Fact] public void A_cleared_initial_state_is_a_finding_not_an_exception()   // XSM-027
+    {
+        using var os = db.NewObjectSpace();
+        var d = Draft(os, Unique());
+        d.InitialStateKey = null!;   // what the lookup's clear button leaves
+        Assert.Contains(svc.Validate(os, d, Roles()).Messages, m => m == "initial state '' does not exist");
+        Assert.DoesNotContain("[*] -->", WorkflowMermaid.Format(DefinitionMapper.ToDef(d, os), new DiagramStyle(ByKind: true)));
+    }
+
+    [Fact] public void Dry_run_refuses_an_invalid_definition()   // XSM-027: as Publish does
+    {
+        using var os = db.NewObjectSpace();
+        var d = Draft(os, Unique());
+        d.InitialStateKey = "nope";
+        var (steps, error) = svc.DryRun(os, d, Roles(), ["submit"], new HashSet<string>());
+        Assert.Empty(steps);
+        Assert.StartsWith("the definition is not valid: initial state 'nope' does not exist", error);
+    }
+
+    [Fact] public void Children_marked_for_deletion_are_left_out_of_validation()   // XSM-027: an unsaved delete counts
+    {
+        using var os = db.NewObjectSpace();
+        var d = Draft(os, Unique());
+        os.CommitChanges();
+        Assert.True(svc.Validate(os, d, Roles()).Ok);
+        var victim = d.Transitions.Single(t => t.Trigger == "reject");
+        os.Delete(victim);
+        Assert.Contains(svc.Validate(os, d, Roles()).Findings!, f => f.State == "rejected");
     }
 
     [Fact] public void Failed_New_renamed_and_retried_is_renumbered()   // XSM-018 (Codex): a refused save must not pin the number

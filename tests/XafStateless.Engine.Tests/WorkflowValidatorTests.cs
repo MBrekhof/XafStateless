@@ -160,6 +160,27 @@ public class WorkflowValidatorTests
         Assert.Contains(WorkflowValidator.Check(d, Env), f => f.Message == "duplicate trigger 'X' from 'ghost'" && f.State == null);
     }
 
+    [Fact] public void Blank_required_texts_are_findings()   // XSM-027: validation runs before XAF's required-field rules
+    {
+        var d = Pr with
+        {
+            Name = "",
+            States = Pr.States.Select(s => s.Key == "approval" ? s with { Caption = " " } : s).ToList(),
+            Transitions = Pr.Transitions.Select(t => t.Trigger == "Reject" ? t with { Trigger = "" } : t).ToList(),
+        };
+        var f = WorkflowValidator.Check(d, Env);
+        Assert.Contains(f, x => x.Message == "the definition has no name" && x.State == null);
+        Assert.Contains(f, x => x.Message == "state 'approval' has no caption" && x.State == "approval");
+        Assert.Contains(f, x => x.Message == "a transition from 'approval' has no action name" && x.State == "approval");
+    }
+
+    [Fact] public void A_blank_initial_state_is_a_finding_and_still_draws()
+    {
+        var d = Pr with { InitialState = "" };
+        Assert.Contains(WorkflowValidator.Check(d, Env), f => f.Message == "initial state '' does not exist");
+        Assert.DoesNotContain("[*] -->", WorkflowMermaid.Format(d, new DiagramStyle(ByKind: true)));
+    }
+
     [Fact] public void Validate_returns_the_finding_messages() =>
         Assert.Equal(WorkflowValidator.Check(NoFinal, Env).Select(f => f.Message), WorkflowValidator.Validate(NoFinal, Env));
 

@@ -86,10 +86,20 @@ public class DesignerJourneyTests : PageTest
         await Expect(Row(designer, "approval", "Approve").GetByRole(AriaRole.Gridcell, new() { Name = "finance", Exact = true })).ToBeVisibleAsync();
         await Shot(designer, "02b-approve-rerouted-to-finance");
 
-        // 3. Publish is refused while finance has no way out; with the edge added it succeeds.
-        await Button(designer, "Publish").ClickAsync();
-        await Expect(Alert(designer, "'finance' has no way out")).ToBeVisibleAsync();
-        await Shot(designer, "03a-publish-refused");
+        // 3. While finance has no way out, the definition shows it (XSM-027): Publish and Dry run are disabled with the reason
+        //    as tooltip, the finance row is colored with its problem, and the diagram draws finance in red. With the edge
+        //    added, Publish is enabled and succeeds. (Edits saved in their own tabs reach the definition view on Refresh.)
+        await Refresh(designer);
+        await Expect(Button(designer, "Publish")).ToBeDisabledAsync();
+        await Expect(Button(designer, "Publish")).ToHaveAttributeAsync("title", new Regex("^Fix first: "));   // the first finding (here decide-amount, unreachable while finance is a dead end)
+        await Expect(Button(designer, "Dry run")).ToBeDisabledAsync();
+        await designer.GetByRole(AriaRole.Tab, new() { Name = "States", Exact = true }).ClickAsync();
+        var problem = designer.GetByRole(AriaRole.Gridcell, new() { NameRegex = new Regex("^'finance' has no way out") });
+        await Expect(problem).ToBeVisibleAsync();
+        Assert.That(await Row(designer, "finance", "Finance").GetByRole(AriaRole.Gridcell, new() { Name = "Finance", Exact = true })
+            .EvaluateAsync<string>("e => getComputedStyle(e).backgroundColor"), Is.EqualTo("rgb(253, 226, 226)"));
+        await Expect(designer.Locator(".xafstateless-diagram-root:visible svg g.problem").Filter(new() { HasTextString = "Finance" })).ToHaveCountAsync(1);
+        await Shot(designer, "03a-publish-disabled-finance-problem");
 
         await designer.GetByRole(AriaRole.Tab, new() { Name = "Transitions", Exact = true }).ClickAsync();
         await designer.GetByRole(AriaRole.Tabpanel, new() { Name = "Transitions" }).GetByRole(AriaRole.Button, new() { Name = "New", Exact = true }).ClickAsync();
@@ -98,6 +108,8 @@ public class DesignerJourneyTests : PageTest
         await Pick(designer, "To Key*", "decide-amount");
         await SaveAndCloseTab(designer);
         await Refresh(designer);
+        await Expect(Button(designer, "Publish")).ToBeEnabledAsync();
+        await Expect(designer.Locator(".xafstateless-diagram-root:visible svg g.problem")).ToHaveCountAsync(0);
         await Button(designer, "Publish").ClickAsync();
         await Expect(Alert(designer, "'purchase-request' v2 published.")).ToBeVisibleAsync();
         await Expect(designer.GetByRole(AriaRole.Combobox, new() { Name = "State", Exact = true })).ToHaveValueAsync("Published");
@@ -159,6 +171,12 @@ public class DesignerJourneyTests : PageTest
         await Expect(WorkflowLink(approver, "Ordered")).ToBeVisibleAsync();
         await Expect(approver.GetByRole(AriaRole.Checkbox, new() { Name = "Ordered", Exact = true })).ToBeCheckedAsync();
         await Shot(approver, "07-v1-request-ordered-without-finance");
+        // 7b. The request's workflow, drawn from the version it runs on, with its current state highlighted (XSM-028).
+        await WorkflowLink(approver, "Ordered").ClickAsync();
+        await Expect(approver.Locator(".xafstateless-diagram-root:visible svg g.current")).ToContainTextAsync("Ordered");
+        await Expect(approver.Locator(".xafstateless-diagram-root:visible svg")).Not.ToContainTextAsync("Finance");   // v1 has no finance
+        await Expect(approver.Locator(".xafstateless-diagram-legend:visible")).ToContainTextAsync("Decision");
+        await Shot(approver, "07b-v1-instance-diagram-current-state");
         await Nav(approver, "Workflow", "Workflow Task");
         await Expect(Row(approver, V1Request, "finance")).ToHaveCountAsync(0);   // the open-tasks list: nothing left for it
         await Expect(Row(approver, V2Request, "finance")).ToHaveCountAsync(0);

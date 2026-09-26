@@ -14,19 +14,19 @@ namespace XafStateless.Blazor;
 
 public interface IModelDiagramViewItem : IModelViewItem;
 
-/// <summary>Mermaid diagram of the current WorkflowDefinition (draft or published), with validator messages under it.
-/// The diagram is derived data, not a bound property, so nothing refreshes it automatically: it recomputes once when
-/// its control is created and again whenever <see cref="IObjectSpace.Committed"/> fires (Save or Publish). It reads
-/// <see cref="ViewItem.View"/>'s CurrentObject rather than its own (populated later, only via the View's propagation
+/// <summary>Mermaid diagram, states colored by kind with a legend (XSM-028).
+/// On a WorkflowDefinition: the definition as it is on screen, problem states in red and the validation messages under it;
+/// the definition's controller validates on every change and pushes the result here (<see cref="IDefinitionValidationListener"/>,
+/// XSM-027). On a WorkflowInstance: the instance's pinned definition with its current state highlighted.
+/// It reads <see cref="ViewItem.View"/>'s CurrentObject rather than its own (populated later, only via the View's propagation
 /// loop), so the first render already has the right object.</summary>
 [ViewItem(typeof(IModelDiagramViewItem))]
 public sealed class DiagramViewItem(IModelViewItem model, Type objectType) :
-    ViewItem(objectType, model.Id), IComponentContentHolder, IComplexViewItem
+    ViewItem(objectType, model.Id), IComponentContentHolder, IComplexViewItem, IDefinitionValidationListener
 {
     DiagramModel? componentModel;
     IObjectSpace? objectSpace;
-    DefinitionService? definitionService;
-    Func<IReadOnlyList<string>> roleNames = () => [];
+    DefinitionResult? validation;   // the latest result pushed by the definition's controller
 
     DiagramModel ComponentModel => componentModel ??= new DiagramModel();
 
@@ -36,9 +36,8 @@ public sealed class DiagramViewItem(IModelViewItem model, Type objectType) :
     void IComplexViewItem.Setup(IObjectSpace objectSpace, XafApplication application)
     {
         this.objectSpace = objectSpace;
-        definitionService = application.ServiceProvider.GetRequiredService<DefinitionService>();
-        roleNames = StringLookup.RoleNames(application.ServiceProvider);
         objectSpace.Committed += ObjectSpace_Committed;
+        objectSpace.Reloaded += ObjectSpace_Committed;
     }
 
     protected override object CreateControlCore()
@@ -55,21 +54,35 @@ public sealed class DiagramViewItem(IModelViewItem model, Type objectType) :
 
     void ObjectSpace_Committed(object? sender, EventArgs e) => Update();
 
+    public void OnValidated(DefinitionResult? result)
+    {
+        validation = result;
+        Update();
+    }
+
     void Update()
     {
-        if (View?.CurrentObject is not WorkflowDefinition d)
+        switch (View?.CurrentObject)
         {
-            ComponentModel.MermaidText = "";
-            ComponentModel.Messages = [];
-            return;
+            case WorkflowDefinition d:
+                var problems = validation?.Findings?.Where(f => f.State != null).Select(f => f.State!).ToHashSet();
+                ComponentModel.MermaidText = WorkflowMermaid.Format(DefinitionMapper.ToDef(d, objectSpace), new DiagramStyle(ByKind: true, Problems: problems));
+                ComponentModel.Messages = validation?.Messages ?? [];
+                break;
+            case WorkflowInstance { Definition: { } pinned } i:
+                ComponentModel.MermaidText = WorkflowMermaid.Format(DefinitionMapper.ToDef(pinned), new DiagramStyle(ByKind: true, Current: i.StateKey));
+                ComponentModel.Messages = [];
+                break;
+            default:
+                ComponentModel.MermaidText = "";
+                ComponentModel.Messages = [];
+                break;
         }
-        ComponentModel.MermaidText = WorkflowMermaid.Format(DefinitionMapper.ToDef(d));
-        ComponentModel.Messages = definitionService!.Validate(objectSpace!, d, roleNames()).Messages;
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (objectSpace != null) objectSpace.Committed -= ObjectSpace_Committed;
+        if (objectSpace != null) { objectSpace.Committed -= ObjectSpace_Committed; objectSpace.Reloaded -= ObjectSpace_Committed; }
         base.Dispose(disposing);
     }
 }

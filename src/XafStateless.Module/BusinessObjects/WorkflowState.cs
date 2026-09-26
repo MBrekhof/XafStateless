@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel.DataAnnotations.Schema;
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.ConditionalAppearance;
 using DevExpress.ExpressApp.DC;
@@ -15,6 +16,9 @@ namespace XafStateless.Module.BusinessObjects;
     Criteria = "Kind != ##Enum#XafStateless.Engine.StateKind,Task#", Visibility = ViewItemVisibility.Hide)]
 [Appearance("WorkflowState.WaitMinutes", AppearanceItemType = "ViewItem", TargetItems = nameof(WaitMinutes), Context = "DetailView",
     Criteria = "Kind != ##Enum#XafStateless.Engine.StateKind,Wait#", Visibility = ViewItemVisibility.Hide)]
+// XSM-027: a state with a validation problem is colored in the definition's States list.
+[Appearance("WorkflowState.Problem", AppearanceItemType = "ViewItem", TargetItems = "*", Context = "ListView",
+    Criteria = "Not IsNullOrEmpty([Problem])", FontColor = "#7f0000", BackColor = "#fde2e2")]
 [ImageName("BO_State")]
 public class WorkflowState : BaseObject, IStringLookupSource
 {
@@ -28,6 +32,10 @@ public class WorkflowState : BaseObject, IStringLookupSource
     [EditorAlias(StringLookup.Multi)] public virtual string? LockedMembers { get; set; }
 
     [Aggregated] public virtual IList<WorkflowEffect> Effects { get; set; } = new ObservableCollection<WorkflowEffect>();
+
+    /// <summary>This state's findings from the latest validation of its definition in this editing session; never stored.</summary>
+    [NotMapped, VisibleInDetailView(false)]
+    public string? Problem => StateProblems.Get(this);
 
     /// <summary>TaskRole: role names. LockedMembers: the subject's members that effects and locks may use.</summary>
     public IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames) => memberName switch

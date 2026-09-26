@@ -108,6 +108,22 @@ public class WorkflowMachineTests
         Assert.Contains($"exceeded {WorkflowMachine.MaxDecisionDepth}", ex.Message);
     }
 
+    [Fact] public void Mermaid_styles_kinds_problems_and_the_current_state_in_that_order()   // XSM-027/028
+    {
+        var def = new WorkflowDef("t", 1, "a",
+            [new("a", "A", StateKind.Manual), new("b", "B", StateKind.Task, TaskRole: "R"), new("c", "C", StateKind.Final)],
+            [new("a", "Go", "b"), new("b", "Done", "c")]);
+        var lines = WorkflowMermaid.Format(def, new DiagramStyle(ByKind: true, Problems: new HashSet<string> { "b", "ghost" }, Current: "a"))
+            .Split('\n').Where(l => l.TrimStart().StartsWith("class")).Select(l => l.Trim()).ToList();
+        Assert.Equal([
+            $"classDef kindManual {WorkflowMermaid.StyleOf(StateKind.Manual)}", "class s0 kindManual",
+            $"classDef kindTask {WorkflowMermaid.StyleOf(StateKind.Task)}", "class s1 kindTask",
+            $"classDef kindFinal {WorkflowMermaid.StyleOf(StateKind.Final)}", "class s2 kindFinal",
+            "classDef problem fill:#fde2e2,stroke:#c62828,stroke-width:3px,color:#7f0000", "class s1 problem",
+            "classDef current stroke:#0d47a1,stroke-width:5px", "class s0 current"], lines);
+        Assert.Equal(WorkflowMermaid.Format(def), WorkflowMermaid.Format(def, null));   // unstyled output unchanged
+    }
+
     [Fact] public void Mermaid_tolerates_duplicate_keys_and_missing_initial_state()
     {
         var def = new WorkflowDef("broken", 1, "nope",
