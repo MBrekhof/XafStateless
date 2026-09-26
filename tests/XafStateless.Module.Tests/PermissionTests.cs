@@ -525,7 +525,19 @@ public class PermissionTests : IClassFixture<TestDb>
         using var view = provider.CreateObjectSpace();   // the request view's space: available, then the task closes elsewhere
         var subject = view.GetObjectByKey<PurchaseRequest>(request);
         Assert.Equal(task, SubjectWorkflowController.OpenTaskId(view, subject));
+        var created = new List<IObjectSpace>();
+        IObjectSpace NewSpace() { var s = provider.CreateObjectSpace(); created.Add(s); return s; }
+
+        var open = SubjectWorkflowController.PrepareOpen(NewSpace, subject);   // still open: the task, in the new space, left open
+        Assert.NotNull(open);
+        Assert.Same(created[0], open.Value.Space);
+        Assert.Equal(task, open.Value.Task.ID);
+        Assert.False(created[0].IsDisposed);
+        created[0].Dispose();   // the root view's job in the app
+
         using (var other = provider.CreateObjectSpace()) Ok(rt.Decide(Caller(other, security, Approver, "Approvers"), task, "Reject"));
-        Assert.Null(SubjectWorkflowController.OpenTaskId(view, subject));   // the same, now stale, space re-queries the database
+        Assert.Null(SubjectWorkflowController.PrepareOpen(NewSpace, subject));   // closed meanwhile: nothing to open ...
+        Assert.Equal(2, created.Count);
+        Assert.True(created[1].IsDisposed);                                    // ... and the space it made is disposed
     }
 }

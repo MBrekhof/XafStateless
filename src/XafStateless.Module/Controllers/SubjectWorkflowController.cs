@@ -73,32 +73,35 @@ public sealed class SubjectWorkflowController : ViewController<DetailView>
             .Select(t => (Guid?)t.ID).FirstOrDefault();
     }
 
-    /// <summary>Re-checks availability, then shows the task in its own secured space (the new root view owns it).</summary>
-    void OpenTask_Execute(object? sender, SimpleActionExecuteEventArgs e)
+    /// <summary>The execute path: a new secured space from <paramref name="newSecuredSpace"/>, the availability check re-run in it
+    /// (the task may have closed since the button was shown), and the task loaded there. Returns the space and task (the caller
+    /// hands the space to a root view, which owns it) or null, having disposed the space.</summary>
+    internal static (IObjectSpace Space, WorkflowTask Task)? PrepareOpen(Func<IObjectSpace> newSecuredSpace, IWorkflowSubject subject)
     {
-        var id = Subject is { } subject ? OpenTaskId(View.ObjectSpace, subject) : null;
-        if (id == null)
-        {
-            Application.ShowViewStrategy.ShowMessage("This task is no longer open.", InformationType.Warning);
-            Refill();
-            return;
-        }
-        var os = Application.CreateObjectSpace(typeof(WorkflowTask));
+        var os = newSecuredSpace();
         try
         {
-            if (os.GetObjectByKey<WorkflowTask>(id.Value) is not { } task)
-            {
-                os.Dispose();
-                Application.ShowViewStrategy.ShowMessage("This task is no longer open.", InformationType.Warning);
-                return;
-            }
-            e.ShowViewParameters.CreatedView = Application.CreateDetailView(os, task, true);
+            if (OpenTaskId(os, subject) is { } id && os.GetObjectByKey<WorkflowTask>(id) is { } task) return (os, task);
         }
         catch
         {
             os.Dispose();
             throw;
         }
+        os.Dispose();
+        return null;
+    }
+
+    void OpenTask_Execute(object? sender, SimpleActionExecuteEventArgs e)
+    {
+        if (Subject is { } subject && PrepareOpen(() => Application.CreateObjectSpace(typeof(WorkflowTask)), subject) is var (os, task))
+        {
+            try { e.ShowViewParameters.CreatedView = Application.CreateDetailView(os, task, true); }
+            catch { os.Dispose(); throw; }
+            return;
+        }
+        Application.ShowViewStrategy.ShowMessage("This task is no longer open.", InformationType.Warning);
+        Refill();
     }
 
     /// <summary>Start: the Published definitions for this subject type, while no workflow runs and the user may write the
