@@ -30,7 +30,7 @@
           "store",
           "db"
         ],
-        "note": "Drafts are validated by the engine and published as immutable, versioned definitions."
+        "note": "Drafts are numbered per name, validated by the engine and published as immutable versions."
       },
       {
         "id": "background",
@@ -42,7 +42,7 @@
           "db",
           "mail"
         ],
-        "note": "The host fires due Wait states and delivers the outbox."
+        "note": "The host fires due Wait states and delivers the outbox, to a role or to the requester."
       }
     ]
   },
@@ -50,7 +50,7 @@
     {
       "id": "users",
       "type": "external",
-      "label": "Designers & approvers",
+      "label": "Designers & users",
       "sublabel": "browser",
       "pos": [
         40,
@@ -150,7 +150,7 @@
       "id": "guards",
       "type": "security",
       "label": "Save guards",
-      "sublabel": "definition · state lock",
+      "sublabel": "definition · lock · outbox",
       "pos": [
         950,
         240
@@ -178,8 +178,8 @@
     {
       "id": "timer",
       "type": "backend",
-      "label": "Timer service",
-      "sublabel": "host · every 30 s",
+      "label": "Timer job",
+      "sublabel": "host · every minute",
       "pos": [
         480,
         400
@@ -193,7 +193,7 @@
       "id": "dispatcher",
       "type": "backend",
       "label": "Notification dispatcher",
-      "sublabel": "host · outbox reader",
+      "sublabel": "host · role or user",
       "pos": [
         720,
         400
@@ -327,19 +327,11 @@
   ],
   "cards": [
     {
-      "dot": "cyan",
-      "title": "Engine",
-      "items": [
-        "Workflows are data, validated before publish",
-        "Runs on Stateless; diagram from the same definition"
-      ]
-    },
-    {
       "dot": "emerald",
       "title": "Runtime",
       "items": [
         "Each transition is one command and one commit",
-        "Lost races lose loudly and retry from a reload"
+        "Notify a role, or @requester: who started it"
       ]
     },
     {
@@ -347,7 +339,15 @@
       "title": "Guards",
       "items": [
         "Published definitions are immutable",
-        "Locked fields refused at save, not only in the UI"
+        "Requester and written notifications are fixed"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Host",
+      "items": [
+        "BPGDemo trial: added by following the docs",
+        "Role grants repeat safely on every update"
       ]
     }
   ]

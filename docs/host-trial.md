@@ -67,8 +67,8 @@ Found by the Codex review of this report, read in code, not tried on a host (bot
 6. §3 did not list `UseDeferredDeletion(this)` as a requirement, although the module's index filters and `DefinitionGuard`
    read `GCRecord`, which only deferred deletion maps. Now required in §3.
 7. §6: `CreateRole` skips the grants when a role with that name already exists, so a host with an existing `Approvers`
-   role, or a second subject added later, silently gets no workflow grants. §6 now says so; an idempotent grant helper is
-   XSM-021.
+   role, or a second subject added later, silently gets no workflow grants. §6 said so; since XSM-021
+   (`b01d81d`) the grants are safe to repeat and §6 grants on every run.
 
 ## What was verified
 
@@ -121,10 +121,10 @@ More screenshots: `images/host-trial/` (definition list, v0 diagram, request Don
 |---|---|---|
 | Workflow Set-field writes bypass the skeleton's automation hooks. A scratch probe on both hook paths saw a UI edit (positive control) and the API PATCHes, but not the runtime's commit that set `Implemented`, although the database had it. The runtime uses `INonSecuredObjectSpaceFactory`; the skeleton announces only `IObjectSpaceFactory` spaces. | Bypass observed; effect on a real generated rule or webhook **unverified** | bpg WF-007 |
 | The generated "Webhook outbox" JobDefinition's Name differs from its command name, so by the recorder's Name lookup its LastRunStatus would never update. The trial showed the mechanism the other way round (Name = command name links). | **Unverified**, read in code only | bpg AUTO-003 |
-| Skeleton users have no e-mail address, so the dispatcher can only log. A real dispatcher needs a user→address source. | Observed | XSM-014 (requester notification) is the place to settle it |
-| A brand-new definition publishes as Version 0; New version makes 1 | Observed, not yet reproduced by a test | XSM-018 |
-| The effect detail view's Kind/Target combos and Order spin have no accessible names (the state view's do) | Observed | XSM-019 |
-| The module's navigation items show XAF's "?" placeholder icon; the effect-kind caption reads "Set field" | Observed, cosmetic | XSM-020 |
+| Skeleton users have no e-mail address, so the dispatcher can only log. A real dispatcher needs a user→address source. | Observed | XSM-014 (`fd4a44d`): Notify can address the requester by user id; resolving a user to an address stays the host's job |
+| A brand-new definition publishes as Version 0; New version makes 1 | Reproduced by a test, fixed | XSM-018 (`b24ad47`) |
+| The effect detail view's Kind/Target combos and Order spin have no accessible names (the state view's do) | Not reproduced in the demo; the E2E journey now checks them by role and name. Likely the BPGDemo layout (XafLayoutBuilder) | XSM-019 (`a26833a`) |
+| The module's navigation items show XAF's "?" placeholder icon; the effect-kind caption reads "Set field" | Images fixed; "Set field" is XAF's standard sentence case for enum values, kept | XSM-020 (`a26833a`) |
 
 ## Putting it in the skeleton for real
 

@@ -6,7 +6,7 @@
 
 - Tasks 1–9 of the plan are implemented, task-reviewed and fixed (cards XSM-001…XSM-009, XSM-011, XSM-012).
 - A final whole-branch review ran; its Critical/Important findings were fixed in `5152782` and re-reviewed clean.
-- Tests: `dotnet test XafStateless.slnx` → Engine 37, Module 95, all green. E2E (`tests/XafStateless.E2E`, needs the demo running on a freshly seeded database — see README) passed 1/1.
+- Tests: `dotnet test XafStateless.slnx` → Engine 40, Module 109, all green. E2E (`tests/XafStateless.E2E`, needs the demo running on a freshly seeded database — see README) passed 1/1.
 - Docs: `README.md` (pitch, comparison with XAF StateMachine, screenshots, how to run), `docs/integrating.md` (host contract + limits), architecture diagram `docs/architecture/xafstateless-architecture.html`.
 
 ## BPGDemo trial — done
@@ -17,9 +17,20 @@ The trial integration (plan `docs/superpowers/plans/2026-09-26-bpgdemo-trial.md`
 - The trial's code is kept on the local BPGDemo branch `trial/xafstateless` (commits `d5b1f93`, `e804d3c`, `b63164f`, never
   pushed); BPGDemo itself stays on `master`. The trial worktree and database `bpgdemoTrial` are removed; recreate them with
   `git -C C:\Projects\BPGDemo worktree add C:\Projects\BPGDemo.trial trial/xafstateless` and the plan's Task 1 update step.
-- Follow-up cards: XafStateless XSM-018 (Version 0), XSM-019 (a11y), XSM-020 (icon/caption), XSM-021 (idempotent grants);
-  bpg WF-007 (hook bypass), JOBS-001 (job plumbing), AUTO-003 (outbox Name, unverified), CARD-1825 (tabs, second sighting).
-- Tests: Engine 37, Module 95.
+- Follow-up cards on the bpg board (for a BPG/BPGDemo session): WF-007 (hook bypass), JOBS-001 (job plumbing),
+  AUTO-003 (outbox Name, unverified), CARD-1825 (tabs, second sighting).
+
+## Follow-ups done (2026-09-26, all in Review)
+
+- XSM-018 `b24ad47`: a definition made with New is numbered max+1 per name, read past security, renumbered after a refused save.
+- XSM-021 `b01d81d`: role grants are safe to repeat on every update; the demo and §6 grant on every run.
+- XSM-019/020 `a26833a`: workflow images on the module's classes; the E2E journey checks effect editors by role and name.
+- XSM-014 `fd4a44d`: Notify can address `@requester`, the user who started the workflow; participants see their own
+  notifications. Guards fix the requester and written notifications.
+- Architecture diagram and README screenshots refreshed.
+- E2E runs against a separate catalog so `XafStatelessDemo` stays untouched: pass
+  `--ConnectionStrings:ConnectionString=...Initial Catalog=XafStatelessE2E` to both demo exe calls (seed and run).
+  One E2E run failed at opening the finance task while the machine was busy with a Codex review; reruns passed.
 
 ## BPG decision (2026-09-26)
 

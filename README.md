@@ -119,6 +119,10 @@ powershell -File tests\XafStateless.E2E\bin\Debug\net10.0\playwright.ps1 install
 dotnet test tests\XafStateless.E2E
 ```
 
+To keep your own `XafStatelessDemo` data, give the E2E run its own catalog: add
+`"--ConnectionStrings:ConnectionString=Data Source=(localdb)\mssqllocaldb;Integrated Security=SSPI;MultipleActiveResultSets=True;Initial Catalog=XafStatelessE2E"`
+to both demo exe lines (seed and run), and drop `XafStatelessE2E` instead before each run.
+
 The E2E test is not part of the solution, so `dotnet test XafStateless.slnx` runs without the demo. It writes a
 screenshot per step to `tests/XafStateless.E2E/screenshots/` (gitignored). The base URL and user names are in
 `tests/XafStateless.E2E/appsettings.e2e.json`.
