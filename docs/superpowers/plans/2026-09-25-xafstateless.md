@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A drop-in XAF module in which end users define workflows as data: they add states, draw transitions, and pick what each state does from a fixed set of step types. The module versions the definitions, validates them before publish, runs them on Stateless, and draws them from the same definition. It must be packaged so BPGDemo can add it the way it already adds XafLayoutBuilder.
+**Goal:** A drop-in XAF module in which end users define workflows as data: they add states, draw transitions, and pick what each state does from a fixed set of step types. The module versions the definitions, validates them before publish, runs them on Stateless, and draws them from the same definition. It must be packaged so the target host application can add it the way it already adds XafLayoutBuilder.
 
-**Architecture:** There are three layers. `XafStateless.Engine` is pure .NET and depends only on Stateless: definition records, the validator, the machine builder, the dry run and Mermaid export. Every rule lives here and is unit-tested without a database. `XafStateless.Module` is the XAF/EF Core module: entities, the immutability interceptor, the publish lifecycle, the runtime (start, fire, decide, timers, effects), and the controllers. `XafStateless.Blazor` renders the diagram. A small generated XAF Blazor app (`demo/`) hosts it, and a trial integration into BPGDemo proves it is reusable.
+**Architecture:** There are three layers. `XafStateless.Engine` is pure .NET and depends only on Stateless: definition records, the validator, the machine builder, the dry run and Mermaid export. Every rule lives here and is unit-tested without a database. `XafStateless.Module` is the XAF/EF Core module: entities, the immutability interceptor, the publish lifecycle, the runtime (start, fire, decide, timers, effects), and the controllers. `XafStateless.Blazor` renders the diagram. A small generated XAF Blazor app (`demo/`) hosts it, and a trial integration into the target host application proves it is reusable.
 
 **Tech Stack:** .NET 10 (SDK 10.0.401), DevExpress XAF 26.1.4 (Blazor, EF Core), EF Core 10.0.10 on SQL Server LocalDB, Stateless 5.20.1, xUnit 2.9.3 (engine and module tests), Microsoft.Playwright.NUnit (E2E), and Mermaid 11 (bundled JavaScript, no CDN).
 
-**Spec:** this document's **Design** section, together with `README.md` (goal, idea, open questions; the questions were settled 2026-09-25: the four step types plus a decision/branch type, a small XAF host app plus a BPGDemo trial, and forms first with a generated diagram).
+**Spec:** this document's **Design** section, together with `README.md` (goal, idea, open questions; the questions were settled 2026-09-25: the four step types plus a decision/branch type, a small XAF host app plus a the target host application trial, and forms first with a generated diagram).
 
 ---
 
@@ -18,7 +18,7 @@
 
 Checked against the dxdocs pages 113713, 113714 and 113715.
 
-| | XAF StateMachine | Elsa 3.8 (XafElsa FINDINGS) | XafStateless |
+| | XAF StateMachine | General-purpose engine (earlier proof of concept) | XafStateless |
 |---|---|---|---|
 | Who defines states | Runtime rows, but each state is a *marker value* of an enum or reference property on the class | IT, in a JSON designer | End users, as rows keyed by a string. No enum and no code change |
 | What a state *does* | Nothing: transitions are toolbar Actions plus Conditional Appearance | Anything, but as opaque nodes | A fixed set of step types that users configure and developers extend |
@@ -46,7 +46,7 @@ Checked against the dxdocs pages 113713, 113714 and 113715.
 
 ### Runtime rules
 
-- There is one commit per operation (Start, Fire, Decide, or one timer). The state change(s), effects, task create/supersede and outbox rows all go into a single `CommitChanges`. On a lost race the whole operation is retried up to 4 times, following XafElsa's `IsLostRace`. What a lost race looks like through XAF is **pinned by the Task 4b spike**, not assumed.
+- There is one commit per operation (Start, Fire, Decide, or one timer). The state change(s), effects, task create/supersede and outbox rows all go into a single `CommitChanges`. On a lost race the whole operation is retried up to 4 times, following the earlier proof of concept's `IsLostRace`. What a lost race looks like through XAF is **pinned by the Task 4b spike**, not assumed.
 - **Concurrency uses XAF's built-in optimistic lock** (dxdocs 405384: on by default for `BaseObject` in new apps through `modelBuilder.UseOptimisticLock()`; hosts must have it on, and `integrating.md` says so). There are no custom `[ConcurrencyCheck] Token` columns. Every command **touches** the subject, the instance and (for Decide) the task, so XAF advances their lock versions in the command's commit. Consequences:
   - Two commands on the same subject collide on the subject row, so exactly one wins.
   - A user's subject save racing a transition also collides on the subject row. The loser retries: a command reloads and re-checks; a user save re-runs the lock guard against the now-persisted state. So an edit can never slip into a state that locks it.
@@ -72,7 +72,7 @@ Checked against the dxdocs pages 113713, 113714 and 113715.
 
 - TFM `net10.0` for every project. `<Nullable>enable</Nullable>` and `<ImplicitUsings>enable</ImplicitUsings>` go in `Directory.Build.props`.
 - DevExpress packages are exactly `26.1.4`. EF Core packages are exactly `10.0.10`. Stateless is exactly `5.20.1`. No floating versions.
-- The database is SQL Server (LocalDB in development and tests), because it matches BPGDemo. The filtered indexes use SQL Server `HasFilter` syntax (`ponytail: SQL Server only; Postgres filter syntax differs — add a provider switch if a non-SQL-Server host appears`).
+- The database is SQL Server (LocalDB in development and tests), because it matches the target host application. The filtered indexes use SQL Server `HasFilter` syntax (`ponytail: SQL Server only; Postgres filter syntax differs — add a provider switch if a non-SQL-Server host appears`).
 - `XafStateless.Engine` references **only** Stateless. No DevExpress and no EF.
 - `XafStateless.Module` must not reference Hangfire, MailKit or any host project. The host wires timers and notification delivery.
 - The subject key is `Guid`, matching XAF `BaseObject` (`ponytail: Guid-keyed subjects only; add a string SubjectKey if a BaseObjectInt host appears`).
@@ -127,7 +127,7 @@ tests/
   XafStateless.Engine.Tests/      xUnit, no DB
   XafStateless.Module.Tests/      xUnit on LocalDB (a fresh database per test class)
   XafStateless.E2E/               Playwright NUnit against the running demo
-docs/integrating.md               how a host (BPGDemo) adds the module
+docs/integrating.md               how a host (the target host application) adds the module
 ```
 
 ---
@@ -816,7 +816,7 @@ public sealed class DefinitionService(DefinitionStore store) {
   - `Retired_is_frozen`: every change to a Retired definition is refused.
   - `SetField_on_ID_is_refused`: the message contains `cannot be set by a workflow`.
 - [ ] **Step 2: Wire the guard first, then run the tests and confirm they fail for the right reason.** Wire it into the demo DbContext (`OnConfiguring` → `AddInterceptors(DefinitionGuard.Instance)`, only when it is not already present) **before** running the tests, because `TestDb` builds on that DbContext.
-- [ ] **Step 3: Implement it.** Follow XafElsa `bpgdemo.Module/BusinessObjects/TransitionSets.cs` (`TransitionSetGuard`) for the shape of the interceptor. Read it with `git -C /c/Projects/XafElsa show HEAD:bpgdemo/bpgdemo.Module/BusinessObjects/TransitionSets.cs`, and read `TransitionSetService.cs` for Publish. Reimplement against the new entities; do not copy the files. `Publish` gets the `DbContext` from `((EFCoreObjectSpace)os).DbContext` and uses `Database.BeginTransaction()`.
+- [ ] **Step 3: Implement it.** Follow the earlier proof of concept's transition-set guard interceptor for the shape. Read the earlier proof of concept's transition-set guard and publish service for the shape. Reimplement against the new entities; do not copy the files. `Publish` gets the `DbContext` from `((EFCoreObjectSpace)os).DbContext` and uses `Database.BeginTransaction()`.
 - [ ] **Step 4: Run them and confirm they pass.**
 - [ ] **Step 5: Registration.** Create `src/XafStateless.Module/ServiceCollectionExtensions.cs` with `public static IServiceCollection AddXafStateless(this IServiceCollection s)`, which registers `DefinitionStore`, `DefinitionService` and (from Task 6 on) `WorkflowRuntime` as singletons, plus `TimeProvider.System` via `TryAddSingleton`, so a test or host can pre-register a fake clock. Call it from the demo `Startup.cs`. It is the **only** registration call a host makes for the module's services. Hosted services (timer, dispatcher) stay host-owned. Add a test that builds a `ServiceCollection`, calls `AddXafStateless()` and resolves each service.
 - [ ] **Step 6: Commit** — `Module: definition guard, mapper, publish lifecycle (XSM-005)`.
@@ -896,9 +896,9 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock) {
   - `Concurrent_decide_one_wins`: two Decides run on two threads. The `"after-load"` hook calls `Barrier(2).SignalAndWait(TimeSpan.FromSeconds(10))` **only on each call's first attempt** (the hook receives the attempt number; a retry skips it, otherwise the loser's retry would wait forever), and the test fails if the wait times out. This way both **command** object spaces have loaded the Open task before either commits. Exactly one returns `Ok`. The other loses at commit, retries, reloads, and returns `already decided`. There is one transition, the task ends Decided exactly once, and there is exactly one "Ordered:" notification.
   - `Instance_on_retired_version_still_fires`: start on v1, publish v2 (with a different trigger name), create a new `DefinitionStore` (a cold cache). Fire the v1 trigger on the old instance: it succeeds.
 - [ ] **Step 2: Run them and confirm they fail.**
-- [ ] **Step 3: Implement it.** (`LostRace` was ported in Task 4 from XafElsa's `driver/DrivingSchoolAdministration/DrivingSchoolAdministration.Blazor.Server/Workflow/TaskDecisionService.cs` lines 97-105, `IsLostRace`.) Register `WorkflowRuntime` in `AddXafStateless()`. Take the shape of `RunDueTimers` from `Handlers/JourneyTimersHandler.cs` / `JourneyBaseline.RunTimers()`: due ids in id order, one object space and commit each, the retry and skip rules above, and collect other failures into an `AggregateException` that is rethrown.
+- [ ] **Step 3: Implement it.** (`LostRace` was ported in Task 4 from the earlier proof of concept's `driver/DrivingSchoolAdministration/DrivingSchoolAdministration.Blazor.Server/Workflow/TaskDecisionService.cs` lines 97-105, `IsLostRace`.) Register `WorkflowRuntime` in `AddXafStateless()`. Take the shape of `RunDueTimers` from `Handlers/JourneyTimersHandler.cs` / `JourneyBaseline.RunTimers()`: due ids in id order, one object space and commit each, the retry and skip rules above, and collect other failures into an `AggregateException` that is rethrown.
 - [ ] **Step 4: Run them and confirm they pass.**
-- [ ] **Step 5: Add a timer host to the demo.** `demo/XafStateless.Demo.Blazor.Server/WorkflowTimerService.cs : BackgroundService` uses a `PeriodicTimer` of 30 s and calls `runtime.RunDueTimers(() => nonSecuredFactory.CreateNonSecuredObjectSpace<WorkflowInstance>())`. Verify `INonSecuredObjectSpaceFactory` with dxdocs, including its DI lifetime: if it is scoped, the service creates a scope per tick. Here, only check that the exe starts and logs one tick without errors. The **end-to-end timer check** (a large-amount request reaching `ordered` within about 90 s) moves to Task 7 Step 4, where the controllers and seed exist. A second service, `LogNotificationDispatcher : BackgroundService`, marks Pending notifications Sent and logs them (`ponytail: log sink; BPGDemo plugs MailKit in Task 10`).
+- [ ] **Step 5: Add a timer host to the demo.** `demo/XafStateless.Demo.Blazor.Server/WorkflowTimerService.cs : BackgroundService` uses a `PeriodicTimer` of 30 s and calls `runtime.RunDueTimers(() => nonSecuredFactory.CreateNonSecuredObjectSpace<WorkflowInstance>())`. Verify `INonSecuredObjectSpaceFactory` with dxdocs, including its DI lifetime: if it is scoped, the service creates a scope per tick. Here, only check that the exe starts and logs one tick without errors. The **end-to-end timer check** (a large-amount request reaching `ordered` within about 90 s) moves to Task 7 Step 4, where the controllers and seed exist. A second service, `LogNotificationDispatcher : BackgroundService`, marks Pending notifications Sent and logs them (`ponytail: log sink; the target host application plugs MailKit in Task 10`).
 - [ ] **Step 6: Commit** — `Module: runtime — start, fire, decide, timers, effects (XSM-006)`.
 
 ---
@@ -925,13 +925,13 @@ Invoke `xaf-viewcontroller-patterns`, `xaf-tools:xaf-conditional-appearance` and
     - `Workflow.Publish` (SimpleAction)
     - `Workflow.DryRun` (PopupWindowShowAction with `DryRunParameters { string Path; string TrueCriteria; string Result }`)
     - Each action saves the draft first.
-    - For a non-Draft definition, the controller sets `View.AllowEdit["NotDraft"] = false`. This fixes XafElsa's caveat that a Published definition was only refused at Save.
+    - For a non-Draft definition, the controller sets `View.AllowEdit["NotDraft"] = false`. This fixes the earlier proof of concept's caveat that a Published definition was only refused at Save.
   - `SubjectWorkflowController : ViewController<DetailView>` with `TargetObjectType = typeof(IWorkflowSubject)`.
     - `Workflow.Start` (SingleChoiceAction). Its items are the Published definition names whose `TargetTypeName` equals the view's type. It is visible when `Workflow == null`.
     - `Workflow.Transition` (SingleChoiceAction, `ShowItemsOnClick`). Its items come from `runtime.Available(...)`, and it is refilled on `CurrentObjectChanged` and after execution.
   - `WorkflowTaskController : ObjectViewController<DetailView, WorkflowTask>`.
     - `Workflow.Decide` (SingleChoiceAction). Its items are `runtime.Outcomes(caller, task.ID)`. It is active when the State is Open and the user is in `task.Role`.
-    - Outcomes come from the pinned definition, not code, which fixes XafElsa's hard-coded outcome list.
+    - Outcomes come from the pinned definition, not code, which fixes the earlier proof of concept's hard-coded outcome list.
   - **All three workflow actions follow the command path.** They:
     1. `View.ObjectSpace.CommitChanges()` if it is modified. If that save is refused (for example a locked field), the action stops and shows the message;
     2. build a `WorkflowCaller`:
@@ -974,7 +974,7 @@ Invoke `xaf-viewcontroller-patterns`, `xaf-tools:xaf-conditional-appearance` and
       - keep the `MaxLength` guard only if `LockedMembers` gets a size limit.
     - The single-select combo reuses the same razor-model shape if `DxComboBoxModel` alone cannot refresh `Data` from `ReadValueCore`.
   - Defense in depth: the publish validator already rejects unknown states, roles and members, so a value set through the Web API or an import is still caught.
-- **Permissions**: `Services/WorkflowPermissions.cs` holds reusable seeding helpers, so hosts (BPGDemo) do not re-derive the matrix from Design → Runtime rules:
+- **Permissions**: `Services/WorkflowPermissions.cs` holds reusable seeding helpers, so hosts (the target host application) do not re-derive the matrix from Design → Runtime rules:
   - `GrantDesigner(PermissionPolicyRole r)`: CRUD on the four definition types; read on instance, task and notification; navigation to the Workflow group (Definitions, Tasks, Notifications). No role read: roles come from `WorkflowRoleCatalog`;
   - `GrantParticipant(PermissionPolicyRole r, params (Type subjectType, string navigationItemId)[] subjects)`:
     - CRUD on each subject type, with a member-level **deny write** on `Workflow` (the guard enforces it too);
@@ -1095,21 +1095,21 @@ Invoke `xaf-tools:xaf-playwright-testing` first.
 
 ### GATE: the user reviews the demo before Task 10
 
-Settled with the user on 2026-09-25: "first a demo using this repo, then start the BPG integration". After Task 9, **stop**. Hand over the exact directory and exe to run the demo, and the E2E screenshots, and wait for an explicit go before touching `C:\Projects\BPGDemo`. Feedback on the demo becomes new tasks here, not changes made during the trial.
+Settled with the user on 2026-09-25: "first a demo using this repo, then start the host integration". After Task 9, **stop**. Hand over the exact directory and exe to run the demo, and the E2E screenshots, and wait for an explicit go before touching the target host repository. Feedback on the demo becomes new tasks here, not changes made during the trial.
 
-### Task 10: Trial integration into BPGDemo (branch, not merged)
+### Task 10: Trial integration into the target host application (branch, not merged)
 
-**Files (in `C:\Projects\BPGDemo`, branch `trial/xafstateless`):**
-- Modify: `bpgdemo/bpgdemo.Module/bpgdemo.Module.csproj`, `Module.cs`, `BusinessObjects/bpgdemoDbContext.cs`, one subject class
-- Modify: `bpgdemo/bpgdemo.Blazor.Server/BlazorModule.cs`, `Startup.cs`, the host page (script tag)
-- Create: `bpgdemo/bpgdemo.Jobs/Commands/WorkflowTimersCommand.cs` and its handler, following the existing `IJobHandler<T>` pattern, plus a seeded `JobDefinition` with cron `* * * * *`
+**Files (in the target host repository, branch `trial/xafstateless`):**
+- Modify: `the host module csproj`, `Module.cs`, `the host DbContext`, one subject class
+- Modify: `the host Blazor module`, `Startup.cs`, the host page (script tag)
+- Create: `a host job command for the workflow timers` and its handler, following the existing `IJobHandler<T>` pattern, plus a seeded `JobDefinition` with cron `* * * * *`
 
 - [ ] **Step 1:** Consume the module through a **ProjectReference to this repo** (`..\..\..\XafStateless\src\...`). Packaging to NuGet waits until the trial passes (`ponytail: ProjectReference for the trial; pack like XafLayoutBuilder once it is adopted`).
 - [ ] **Step 2:** Follow `docs/integrating.md` **literally**. Every step that is missing or wrong in the doc is a doc bug: fix the doc in this repo and note it in the trial report.
-- [ ] **Step 3:** Pick one existing BPGDemo business class as the subject. If none fits, add a minimal `ChangeRequest` class in the trial branch only, then define a three-state flow in the UI.
+- [ ] **Step 3:** Pick one existing the target host application business class as the subject. If none fits, add a minimal `ChangeRequest` class in the trial branch only, then define a three-state flow in the UI.
 - [ ] **Step 4:** Build, run and walk the flow once. Confirm the Hangfire job fires a Wait. Screenshot it.
-- [ ] **Step 5:** Write `docs/bpgdemo-trial.md` in this repo, listing each touch point in BPGDemo with its line count and every friction found. Commit it here. The BPGDemo branch stays local and unpushed until the user decides.
-- [ ] **Step 6: Commit (XafStateless)** — `BPGDemo trial integration report (XSM-010)`.
+- [ ] **Step 5:** Write `docs/host-trial.md` in this repo, listing each touch point in the target host application with its line count and every friction found. Commit it here. The the target host application branch stays local and unpushed until the user decides.
+- [ ] **Step 6: Commit (XafStateless)** — `the target host application trial integration report (XSM-010)`.
 
 ---
 
@@ -1117,8 +1117,8 @@ Settled with the user on 2026-09-25: "first a demo using this repo, then start t
 
 - Per-state appearance beyond locking (colors, hiding fields). Locking is covered by Task 7b; the rest can come later if someone asks.
 - A drag-and-drop diagram editor. It comes back only if forms prove too clumsy in the Task 9 journey.
-- Migrating running instances to a new version. They stay pinned, the same as XafElsa POC-009.
-- Multi-node timer or dispatcher safety. The target is a single instance, as XafElsa tested (`ponytail: add a lease column when a second node appears`).
+- Migrating running instances to a new version. They stay pinned, the same as the earlier proof of concept.
+- Multi-node timer or dispatcher safety. The target is a single instance, as the earlier proof of concept tested (`ponytail: add a lease column when a second node appears`).
 - Non-SQL-Server providers, and non-Guid subject keys (see Global Constraints).
 - NuGet packaging (after the Task 10 trial).
 
@@ -1151,4 +1151,4 @@ Settled with the user on 2026-09-25: "first a demo using this repo, then start t
    - Timer retry rules are unified.
    - Mermaid comes from our own formatter, so a broken draft still draws.
 4. Lookups for states, roles and members: **custom Blazor string lookup editors** (option b; the model stays string-keyed), in `XafStateless.Blazor`, created in Task 7. The multi-select follows WLNCentral's `Editors/TagBox` (a custom razor `DxTagBox` + `ComponentModelBase`, refreshed in `ReadValueCore`).
-5. Order: **the demo in this repo first**, with a gate after Task 9, **then** the BPGDemo trial.
+5. Order: **the demo in this repo first**, with a gate after Task 9, **then** the the target host application trial.
