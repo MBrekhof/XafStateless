@@ -1,7 +1,20 @@
+@using DevExpress.Blazor
 @using Microsoft.JSInterop
 
 <div class="xafstateless-diagram-root">
-    <div class="xafstateless-diagram" @ref="container"></div>
+    @* XSM-023: zoom and orientation; the drawing itself is diagram.js's. *@
+    <div class="xafstateless-diagram-toolbar" role="toolbar" aria-label="Diagram" style="display:flex;gap:4px;margin-bottom:6px;">
+        <DxButton Text="−" SizeMode="SizeMode.Small" RenderStyle="ButtonRenderStyle.Secondary" RenderStyleMode="ButtonRenderStyleMode.Outline"
+                  Attributes="@Labelled("Zoom out")" Click="@(() => Zoom(0.8))" />
+        <DxButton Text="+" SizeMode="SizeMode.Small" RenderStyle="ButtonRenderStyle.Secondary" RenderStyleMode="ButtonRenderStyleMode.Outline"
+                  Attributes="@Labelled("Zoom in")" Click="@(() => Zoom(1.25))" />
+        <DxButton Text="Fit" SizeMode="SizeMode.Small" RenderStyle="ButtonRenderStyle.Secondary" RenderStyleMode="ButtonRenderStyleMode.Outline"
+                  Attributes="@Labelled("Fit to width")" Click="@Fit" />
+        <DxButton Text="@(landscape ? "Portrait" : "Landscape")" SizeMode="SizeMode.Small" RenderStyle="ButtonRenderStyle.Secondary"
+                  RenderStyleMode="ButtonRenderStyleMode.Outline"
+                  Attributes="@Labelled(landscape ? "Show top to bottom" : "Show left to right")" Click="@ToggleOrientation" />
+    </div>
+    <div class="xafstateless-diagram" @ref="container" style="overflow:auto;"></div>
     @if (scriptsMissing)
     {
         <p class="xafstateless-diagram-missing">Diagram scripts are not loaded (mermaid.min.js, diagram.js): see docs/integrating.md.</p>
@@ -24,27 +37,42 @@
 
     ElementReference container;
     string rendered = "";
+    string renderedDirection = "";
+    bool landscape;
     bool scriptsMissing;
 
-    // Re-renders only when the text actually changed (Save/Publish re-fires this via a fresh Committed-triggered value,
-    // but most re-renders of the surrounding page do not change MermaidText).
+    string Direction => landscape ? "LR" : "TB";
+
+    static Dictionary<string, object> Labelled(string label) => new() { ["title"] = label, ["aria-label"] = label };
+
+    // Re-renders only when the text or the orientation changed (Save/Publish re-fires this via a fresh Committed-triggered
+    // value, but most re-renders of the surrounding page change neither).
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (MermaidText != rendered)
+        if (MermaidText == rendered && Direction == renderedDirection) return;
+        (rendered, renderedDirection) = (MermaidText, Direction);
+        await Call("diagram.render", container, MermaidText, Direction);
+    }
+
+    void ToggleOrientation() => landscape = !landscape;   // the next OnAfterRenderAsync redraws
+
+    Task Zoom(double factor) => Call("diagram.zoom", container, factor);
+
+    Task Fit() => Call("diagram.fit", container);
+
+    async Task Call(string function, params object[] args)
+    {
+        try
         {
-            rendered = MermaidText;
-            try
-            {
-                await JS.InvokeVoidAsync("diagram.render", container, MermaidText);
-            }
-            catch (JSException)   // the host page lacks the script tags: say so instead of breaking the circuit
-            {
-                if (!scriptsMissing) { scriptsMissing = true; StateHasChanged(); }
-            }
-            catch (Exception ex) when (ex is JSDisconnectedException or TaskCanceledException)
-            {
-                // circuit teardown: nothing to render into any more
-            }
+            await JS.InvokeVoidAsync(function, args);
+        }
+        catch (JSException)   // the host page lacks the script tags: say so instead of breaking the circuit
+        {
+            if (!scriptsMissing) { scriptsMissing = true; StateHasChanged(); }
+        }
+        catch (Exception ex) when (ex is JSDisconnectedException or TaskCanceledException)
+        {
+            // circuit teardown: nothing to render into any more
         }
     }
 }

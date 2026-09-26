@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations.Schema;
 using DevExpress.ExpressApp.ConditionalAppearance;
+using DevExpress.ExpressApp.DC;
 using DevExpress.ExpressApp.Editors;
 using DevExpress.Persistent.Base;
 using DevExpress.Persistent.BaseImpl.EF;
@@ -20,7 +21,10 @@ public class WorkflowTransition : BaseObject, IStringLookupSource
 {
     public virtual WorkflowDefinition? Definition { get; set; }
     [RuleRequiredField, ImmediatePostData, EditorAlias(StringLookup.Single)] public virtual string FromKey { get; set; } = "";
-    [RuleRequiredField] public virtual string Trigger { get; set; } = "";
+    // XSM-022: the stored name is the trigger; on screen it reads as what users press.
+    [RuleRequiredField, XafDisplayName("Action name"),
+     ToolTip("What users press: the Transition button for a manual state, or a Decide outcome for a task. Decision and wait exits use it as the branch name.")]
+    public virtual string Trigger { get; set; } = "";
     [RuleRequiredField, EditorAlias(StringLookup.Single)] public virtual string ToKey { get; set; } = "";
     [CriteriaOptions(nameof(TargetType))] public virtual string? Criteria { get; set; }
     [EditorAlias(StringLookup.Single)] public virtual string? RequiredRole { get; set; }

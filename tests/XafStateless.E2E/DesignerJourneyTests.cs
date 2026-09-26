@@ -94,13 +94,14 @@ public class DesignerJourneyTests : PageTest
         await designer.GetByRole(AriaRole.Tab, new() { Name = "Transitions", Exact = true }).ClickAsync();
         await designer.GetByRole(AriaRole.Tabpanel, new() { Name = "Transitions" }).GetByRole(AriaRole.Button, new() { Name = "New", Exact = true }).ClickAsync();
         await Pick(designer, "From Key*", "finance");
-        await designer.GetByRole(AriaRole.Textbox, new() { Name = "Trigger*" }).FillAsync("Approve");
+        await designer.GetByRole(AriaRole.Textbox, new() { Name = "Action name*" }).FillAsync("Approve");   // the Trigger, relabelled (XSM-022)
         await Pick(designer, "To Key*", "decide-amount");
         await SaveAndCloseTab(designer);
         await Refresh(designer);
         await Button(designer, "Publish").ClickAsync();
         await Expect(Alert(designer, "'purchase-request' v2 published.")).ToBeVisibleAsync();
         await Expect(designer.GetByRole(AriaRole.Combobox, new() { Name = "State", Exact = true })).ToHaveValueAsync("Published");
+        await Expect(designer.GetByRole(AriaRole.Combobox, new() { Name = "Target Type Name*", Exact = true })).ToBeDisabledAsync();   // frozen once published
         await Shot(designer, "03b-published-v2");
 
         // 4. The diagram, drawn from the same definition, shows finance.
@@ -112,6 +113,25 @@ public class DesignerJourneyTests : PageTest
         await diagram.ScrollIntoViewIfNeededAsync();
         await diagram.ScreenshotAsync(new() { Path = ShotPath("04-diagram-with-finance"), Animations = ScreenshotAnimations.Disabled });
         TestContext.AddTestAttachment(ShotPath("04-diagram-with-finance"));
+
+        // 4b. The diagram toolbar (XSM-023): landscape draws left to right, zoom scales it, Fit and Portrait restore it.
+        var svg = diagram.Locator("svg").First;
+        async Task<LocatorBoundingBoxResult> Box() => (await svg.BoundingBoxAsync())!;
+        var portrait = await Box();
+        await diagram.GetByRole(AriaRole.Button, new() { Name = "Show left to right" }).ClickAsync();
+        await Expect(diagram.GetByRole(AriaRole.Button, new() { Name = "Show top to bottom" })).ToBeVisibleAsync();
+        await Until("landscape is wider than portrait", async () => { var b = await Box(); return b.Width / b.Height > portrait.Width / portrait.Height; });
+        await Expect(svg).ToContainTextAsync("Finance");
+        var fitted = await Box();
+        await diagram.GetByRole(AriaRole.Button, new() { Name = "Zoom in" }).ClickAsync();
+        await Until("zoom in enlarges", async () => (await Box()).Width > fitted.Width * 1.1);
+        await diagram.ScreenshotAsync(new() { Path = ShotPath("04b-diagram-landscape-zoomed"), Animations = ScreenshotAnimations.Disabled });
+        await diagram.GetByRole(AriaRole.Button, new() { Name = "Fit to width" }).ClickAsync();
+        await Until("fit restores the width", async () => Math.Abs((await Box()).Width - fitted.Width) < 2);
+        await diagram.GetByRole(AriaRole.Button, new() { Name = "Show top to bottom" }).ClickAsync();
+        await Expect(diagram.GetByRole(AriaRole.Button, new() { Name = "Show left to right" })).ToBeVisibleAsync();
+        await Until("portrait is drawn again", async () => { var b = await Box(); return Math.Abs(b.Width / b.Height - portrait.Width / portrait.Height) < 0.05; });
+        await Expect(svg).ToContainTextAsync("Finance");
         await designer.SetViewportSizeAsync(1440, 900);
 
         // 5. The approver creates a request (Amount 50), starts it (now on v2) and submits it.
@@ -150,7 +170,37 @@ public class DesignerJourneyTests : PageTest
         await Shot(approver, "08-requester-notifications");
     }
 
+    [Test]
+    public async Task Designer_picks_the_target_type_of_a_new_definition_from_the_subjects()   // XSM-022
+    {
+        SetDefaultExpectTimeout(S.TimeoutMs);
+        var designer = await LogIn(Page, S.Designer);
+        await Nav(designer, "Workflow", "Workflow Definition");
+        await Button(designer, "New").ClickAsync();
+        var name = $"e2e-{Guid.NewGuid():N}"[..16];
+        await designer.GetByRole(AriaRole.Textbox, new() { Name = "Name*" }).FillAsync(name);
+        await Pick(designer, "Target Type Name*", "XafStateless.Demo.Module.BusinessObjects.PurchaseRequest");
+        await Button(designer, "Save").ClickAsync();
+        await Expect(Button(designer, "Save")).ToBeDisabledAsync();
+        await Refresh(designer);
+        await Expect(designer.GetByRole(AriaRole.Combobox, new() { Name = "Target Type Name*", Exact = true }))
+            .ToHaveValueAsync("XafStateless.Demo.Module.BusinessObjects.PurchaseRequest");
+        await Expect(designer.GetByRole(AriaRole.Spinbutton, new() { Name = "Version" })).ToHaveValueAsync("1");   // XSM-018 too
+        await Shot(designer, "09-new-definition-target-type");
+    }
+
     // ---- helpers: one per UI gesture ----
+
+    /// <summary>Retries <paramref name="condition"/> until it holds or the expect timeout passes (the diagram redraws in JS).</summary>
+    static async Task Until(string what, Func<Task<bool>> condition)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(S.TimeoutMs);
+        while (!await condition())
+        {
+            if (DateTime.UtcNow > deadline) Assert.Fail($"timed out waiting until {what}");
+            await Task.Delay(200);
+        }
+    }
 
     async Task<IPage> LogIn(IPage page, string user)
     {

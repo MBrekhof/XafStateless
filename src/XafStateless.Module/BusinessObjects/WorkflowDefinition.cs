@@ -18,7 +18,8 @@ public enum DefinitionState { Draft, Published, Retired }
 public class WorkflowDefinition : BaseObject, IStringLookupSource
 {
     [RuleRequiredField] public virtual string Name { get; set; } = "";            // stable key
-    [RuleRequiredField] public virtual string TargetTypeName { get; set; } = "";  // full CLR name of an IWorkflowSubject class
+    // full CLR name of an IWorkflowSubject class, picked from the classes that implement it (XSM-022)
+    [RuleRequiredField, ImmediatePostData, EditorAlias(StringLookup.Single)] public virtual string TargetTypeName { get; set; } = "";
     [ModelDefault("AllowEdit", "False")] public virtual int Version { get; set; }   // set by NewDraft, or by OnSaving for New
     // Lifecycle fields: only NewDraft and Publish set them (DefinitionGuard enforces it); read-only on screen.
     [ModelDefault("AllowEdit", "False")] public virtual DefinitionState State { get; set; }
@@ -43,6 +44,15 @@ public class WorkflowDefinition : BaseObject, IStringLookupSource
             (Version, versionAssigned) = (DefinitionService.NextVersion(ObjectSpace, Name), true);
     }
 
-    public IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames) =>
-        memberName == nameof(InitialStateKey) ? States.Select(s => s.Key) : [];
+    public IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames) => memberName switch
+    {
+        nameof(InitialStateKey) => States.Select(s => s.Key),
+        nameof(TargetTypeName) => SubjectTypeNames(),
+        _ => [],
+    };
+
+    /// <summary>Every persistent, non-abstract class implementing <see cref="IWorkflowSubject"/>: the interface is the marker.</summary>
+    public static IEnumerable<string> SubjectTypeNames() => XafTypesInfo.Instance.PersistentTypes
+        .Where(t => !t.IsAbstract && t.Type != null && typeof(IWorkflowSubject).IsAssignableFrom(t.Type))
+        .Select(t => t.FullName).Order(StringComparer.Ordinal);
 }

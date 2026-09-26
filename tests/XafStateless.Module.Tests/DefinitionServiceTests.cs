@@ -202,6 +202,15 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         Assert.Equal((1, 2), (a.Version, b.Version));
     }
 
+    [Fact] public void Target_type_list_is_the_workflow_subjects()   // XSM-022: IWorkflowSubject is the marker
+    {
+        using var _ = db.NewObjectSpace();   // types info is set up with the fixture
+        var names = WorkflowDefinition.SubjectTypeNames().ToList();
+        Assert.Contains(typeof(PurchaseRequest).FullName!, names);
+        Assert.DoesNotContain(typeof(WorkflowDefinition).FullName!, names);
+        Assert.All(names, n => Assert.True(typeof(IWorkflowSubject).IsAssignableFrom(XafTypesInfo.Instance.FindTypeInfo(n).Type)));
+    }
+
     [Fact] public void Failed_New_renamed_and_retried_is_renumbered()   // XSM-018 (Codex): a refused save must not pin the number
     {
         var (taken, fresh) = (Unique(), Unique());
