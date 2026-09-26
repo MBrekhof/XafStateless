@@ -27,7 +27,13 @@ public static class WorkflowCommand
         var (roles, services) = (RoleNames(app), app.ServiceProvider);
         return new(app.Security?.UserName ?? "", roles.Contains, secured,
             () => services.GetRequiredService<INonSecuredObjectSpaceFactory>().CreateNonSecuredObjectSpace(typeof(WorkflowInstance)),
-            app.Security as IRequestSecurityStrategy);
+            app.Security as IRequestSecurityStrategy,
+            app.Security?.UserId switch
+            {
+                null => null,
+                Guid id => id,
+                var other => throw new NotSupportedException($"XafStateless needs Guid-keyed users; the user key is a {other.GetType().Name}."),
+            });
     }
 
     /// <summary>Commits pending changes of <paramref name="os"/>. A refused save (validation, security, a guard) shows its

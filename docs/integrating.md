@@ -207,8 +207,9 @@ PermissionPolicyRole GrantRole(string name, Action<PermissionPolicyRole> grant) 
 - **`GrantParticipant(role, params (Type subjectType, string navigationItemId)[] subjects)`** grants:
   - CRUD on each subject class, except writing its `Workflow` link;
   - read on the definition types;
-  - read on tasks and notifications addressed to this role, and on instances of the granted subject types;
-  - navigation to Workflow Task and to each subject.
+  - read on tasks and notifications addressed to this role, on notifications addressed to the logged-on user (see
+    "The requester" in step 9), and on instances of the granted subject types;
+  - navigation to Workflow Task, Workflow Notification and each subject.
 
   About the arguments:
   - Each tuple is a subject class and its navigation item. An id without `/` is taken as an item in the **Default**
@@ -227,10 +228,13 @@ PermissionPolicyRole GrantRole(string name, Action<PermissionPolicyRole> grant) 
   `WorkflowCaller` itself over a secured object space (a Web API endpoint, a job acting for a user) must pass the
   `IRequestSecurityStrategy` that secures it as `Security`; without it, Start and Fire are refused with the same "requires
   write access" message, because the Write check cannot run. A plain, non-secured object space needs no strategy.
+  Pass the user's key as `UserId` too: Start records it as the requester (step 9). Without it the workflow has no
+  requester, and requester notifications are skipped.
 - **Role membership is read from the logged-on user** (`IPermissionPolicyUser.Roles`) and stays cached until the next
   logon, so a role granted or revoked meanwhile changes what the workflow actions allow only after the user logs on again.
 - **Role names in workflows are role names.** A Task state's role, a transition's required role and a Notify
-  recipient are all names of `PermissionPolicyRole` rows. The lookups read them through a non-secured object space, so
+  recipient are all names of `PermissionPolicyRole` rows, except the Notify recipient `@requester` (step 9); a role
+  named `@requester` makes a definition that uses it fail validation. The lookups read them through a non-secured object space, so
   users need no read permission on roles.
 - The demo also gives its workflow users the template's `Default` role, for My Details and the per-user model store.
   The workflow permissions do not need it.
@@ -311,14 +315,27 @@ skeleton), where Hangfire's activator already gives each job run its own scope.
 ## 9. Notification delivery
 
 A Notify effect writes a `WorkflowNotification` row (the outbox), in the same commit as the state change:
-- `Role`: the recipient role name;
+- the recipient, exactly one of:
+  - `Role`: a role name, for a Notify addressed to a role;
+  - `UserId` (with `UserName` as a display snapshot): a single user, for a Notify addressed to `@requester`;
 - `Body`: the template with `{Member}` placeholders filled in. A placeholder reads any member of the subject, whatever the
   recipient role's member-level Read permissions: designers are trusted not to put hidden members into a notification;
 - `State` = `Pending`, plus `Attempts`, `LastError` and `CreatedUtc`.
 
+**The requester.** The Target lookup of a Notify effect offers `@requester` first: the user who started the workflow.
+Start records that user on the instance (`StartedById`, `StartedBy`) before the initial state runs, so a Notify in the
+initial state reaches them too; later steps address the same user whoever moves the workflow (an approver, the timer).
+The requester is fixed once the instance exists. A workflow started without a user (a `WorkflowCaller` without `UserId`)
+has no requester: its requester notifications are skipped, and the result message says so. Participants read the
+notifications addressed to them in the Workflow Notification list (`[UserId] = CurrentUserId()`), next to their role's.
+Users must be Guid-keyed (XAF's `BaseObject` users are); another key type is refused at Start.
+
+A notification's recipient, `Body`, `Instance` and `CreatedUtc` are fixed once written; delivery may change `State`,
+`Attempts` and `LastError`.
+
 The host delivers the rows. Read the `Pending` rows through a non-secured object space, deliver each one (resolve the
-role to users or addresses however the host does that), then set `State` to `Sent`, or to `Failed` with `LastError`,
-and increase `Attempts`. The demo's `LogNotificationDispatcher` (`XafStateless.Demo.Blazor.Server/`) only logs each row
+role, or the user by `UserId`, to addresses however the host does that; a user that no longer exists is a failed
+delivery), then set `State` to `Sent`, or to `Failed` with `LastError`, and increase `Attempts`. The demo's `LogNotificationDispatcher` (`XafStateless.Demo.Blazor.Server/`) only logs each row
 and marks it Sent every 30 seconds. It has the same shape as the timer: a `BackgroundService` with a scope per tick.
 
 ```csharp
@@ -343,8 +360,8 @@ and run **Start workflow**. `tests/XafStateless.E2E` walks this whole path again
 
 - **SQL Server only.** The filtered unique indexes use SQL Server `HasFilter` syntax, and the lost-race detection recognizes SQL
   Server's unique-key violations (`SqlException` 2601/2627).
-- **Guid-keyed subjects only.** The instance stores `SubjectId` as a Guid (matching XAF `BaseObject`). A subject on
-  `BaseObjectInt` is not supported.
+- **Guid-keyed subjects and users only.** The instance stores `SubjectId` as a Guid (matching XAF `BaseObject`). A
+  subject on `BaseObjectInt` is not supported, and neither is a user key other than Guid (the requester is stored by id).
 - **The guards are SaveChanges interceptors.** EF Core `ExecuteUpdate`/`ExecuteDelete`, raw SQL, and anything else that
   skips `SaveChanges` bypasses them, including immutable published definitions, runtime-owned rows and field locks.
   Keep such writes away from workflow tables and locked subject fields. The same holds for a database-level

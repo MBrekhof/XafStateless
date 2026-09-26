@@ -168,6 +168,23 @@ public class WorkflowValidatorTests
         Assert.Contains(V(d), e => e.Contains("role 'Ghosts' does not exist"));
     }
 
+    static WorkflowDef NotifyOnApproval(string target) =>
+        Pr with { States = Pr.States.Select(s => s.Key == "approval" ? s with { OnEntry = [new(EffectKind.Notify, target, "msg")] } : s).ToList() };
+
+    [Fact] public void Notify_may_address_the_requester() => Assert.Empty(V(NotifyOnApproval(EffectDef.Requester)));   // XSM-014
+
+    [Fact] public void A_role_named_like_the_requester_token_conflicts()
+    {
+        var errs = WorkflowValidator.Validate(NotifyOnApproval(EffectDef.Requester), new FakeEnv("Approvers", EffectDef.Requester));
+        Assert.Contains(errs, e => e.Contains($"a role named '{EffectDef.Requester}'"));
+    }
+
+    [Fact] public void The_requester_token_is_not_a_task_role()
+    {
+        var d = Pr with { States = Pr.States.Select(s => s.Key == "approval" ? s with { TaskRole = EffectDef.Requester } : s).ToList() };
+        Assert.Contains(V(d), e => e.Contains($"role '{EffectDef.Requester}' does not exist"));
+    }
+
     [Fact] public void Transition_role_must_exist()
     {
         var d = Pr with { Transitions = Pr.Transitions.Select(t => t.Trigger == "Submit" ? t with { RequiredRole = "Ghosts" } : t).ToList() };

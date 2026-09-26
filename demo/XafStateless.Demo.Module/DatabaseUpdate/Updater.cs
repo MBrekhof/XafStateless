@@ -101,8 +101,9 @@ public class Updater : ModuleUpdater {
                 OnEntry: [new(EffectKind.Notify, "Approvers", "Please approve {Title}")], Locked: ["Amount"]),   // the amount under approval cannot change
             new("decide-amount", "Amount check", StateKind.Decision),
             new("wait-cooling", "Cooling-off", StateKind.Wait, WaitMinutes: 1),
-            new("ordered", "Ordered", StateKind.Final, OnEntry: [new(EffectKind.SetField, "Ordered", "true")]),
-            new("rejected", "Rejected", StateKind.Final),
+            new("ordered", "Ordered", StateKind.Final,
+                OnEntry: [new(EffectKind.SetField, "Ordered", "true"), new(EffectKind.Notify, EffectDef.Requester, "Your request {Title} was ordered")]),
+            new("rejected", "Rejected", StateKind.Final, OnEntry: [new(EffectKind.Notify, EffectDef.Requester, "Your request {Title} was rejected")]),
         ],
         [
             new("draft", "Submit", "approval"),

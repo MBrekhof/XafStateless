@@ -29,8 +29,9 @@ public static class WorkflowPermissions
     }
 
     /// <summary>CRUD on each subject type except writing its <c>Workflow</c> link; read on the definition types; navigation to
-    /// Tasks and to each subject. Runtime rows are read-only (the runtime writes them) and scoped by object permissions:
-    /// tasks and notifications addressed to this role (<c>[Role] = r.Name</c>), instances of the granted subject types (one
+    /// Tasks, Notifications and each subject. Runtime rows are read-only (the runtime writes them) and scoped by object permissions:
+    /// tasks and notifications addressed to this role (<c>[Role] = r.Name</c>), notifications addressed to the logged-on user
+    /// (a requester's, <c>[UserId] = CurrentUserId()</c>), instances of the granted subject types (one
     /// permission per type, so a subject added later adds one row). A user holding several roles sees the union.</summary>
     /// <param name="subjects">A navigation item id (assumed in the Default group) or a full item path (contains '/').</param>
     /// <remarks>Set the role's Name before calling: the task and notification scope captures it.</remarks>
@@ -48,9 +49,11 @@ public static class WorkflowPermissions
         var ownRole = new BinaryOperator(nameof(WorkflowTask.Role), r.Name).ToString();
         Object(r, typeof(WorkflowTask), ownRole);
         Object(r, typeof(WorkflowNotification), ownRole);
+        Object(r, typeof(WorkflowNotification), "[UserId] = CurrentUserId()");   // requester notifications addressed to this user
         foreach (var type in subjects.Select(x => x.subjectType).Distinct())
             Object(r, typeof(WorkflowInstance), new BinaryOperator(nameof(WorkflowInstance.SubjectType), type.FullName!).ToString());
         Navigation(r, NavigationGroup + ListView(typeof(WorkflowTask)));
+        Navigation(r, NavigationGroup + ListView(typeof(WorkflowNotification)));
     }
 
     static string ListView(Type t) => t.Name + "_ListView";

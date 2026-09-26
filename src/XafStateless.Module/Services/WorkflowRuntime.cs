@@ -14,9 +14,10 @@ public sealed record RunResult(bool Ok, string Message, IReadOnlyList<Step> Step
 /// <summary>Who is acting. Secured = the caller's secured object space (read + authorization only, never written by the runtime);
 /// NewCommandSpace = a factory for non-secured object spaces (INonSecuredObjectSpaceFactory), in which the runtime does its writes;
 /// Security = the strategy that secures <see cref="Secured"/>, for the Write check of Start and Fire. A secured space
-/// (<see cref="ISecuredObjectSpace"/>) without it is refused; a plain space (no security configured) needs none.</summary>
+/// (<see cref="ISecuredObjectSpace"/>) without it is refused; a plain space (no security configured) needs none.
+/// UserId = the logged-on user's key; Start records it as the instance's requester (null: no requester).</summary>
 public sealed record WorkflowCaller(string Name, Func<string, bool> InRole, IObjectSpace? Secured, Func<IObjectSpace> NewCommandSpace,
-    IRequestSecurityStrategy? Security = null)
+    IRequestSecurityStrategy? Security = null, Guid? UserId = null)
 {
     public static WorkflowCaller System(Func<IObjectSpace> newCommandSpace) => new("system", _ => true, null, newCommandSpace);
 }
@@ -54,6 +55,8 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
         public IReadOnlyList<Step> Steps { get; set; } = [];
         /// <summary>This attempt's write permit; SetField records its (subject, member) exemption here.</summary>
         public RuntimeScope? Scope { get; set; }
+        /// <summary>Things this attempt skipped, reported with the result (a requester Notify without a requester).</summary>
+        public List<string> Notes { get; } = [];
     }
 
     public RunResult Start(WorkflowCaller c, Type subjectType, Guid subjectId, string definitionName) =>
@@ -64,6 +67,7 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
             if (pinned.TargetTypeName != subjectType.FullName) return $"definition '{definitionName}' is for {pinned.TargetTypeName}";
             var instance = x.Os.CreateObject<WorkflowInstance>();
             (instance.SubjectType, instance.SubjectId, instance.Definition) = (subjectType.FullName!, x.Subject.ID, pinned);
+            (instance.StartedById, instance.StartedBy) = (c.UserId, c.UserId is null ? null : c.Name);   // before the initial state's effects
             x.Subject.Workflow = instance;
             (x.Instance, x.Def) = (instance, store.Get(x.Os, pinned.ID));
             x.Steps = Machine(x).EnterInitial();
@@ -179,7 +183,7 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
                     if (row != null && !os.IsNewObject(row)) Concurrency.Touch(os, row);
                 TestHook?.Invoke("before-commit", attempt);
                 os.CommitChanges();
-                return new(true, done(x), x.Steps);
+                return new(true, string.Join(" ", [done(x), .. x.Notes.Distinct()]), x.Steps);
             }
             catch (Exception ex) when (LostRace.Is(ex))
             {
@@ -253,8 +257,16 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
                     runtimeScope.Allow(runtimeScope.Context.Entry(x.Subject).Metadata.ClrType, x.Subject.ID, member.Name);
                     break;
                 case EffectKind.Notify:
+                    var toRequester = effect.Target == EffectDef.Requester;
+                    if (toRequester && instance.StartedById is null)
+                    {
+                        x.Notes.Add("A requester notification was skipped: the workflow was started without a user (no requester).");
+                        break;
+                    }
                     var note = x.Os.CreateObject<WorkflowNotification>();
-                    (note.Role, note.Instance, note.State, note.CreatedUtc) = (effect.Target, instance, NotificationState.Pending, now);
+                    (note.Instance, note.State, note.CreatedUtc) = (instance, NotificationState.Pending, now);
+                    if (toRequester) (note.UserId, note.UserName) = (instance.StartedById, instance.StartedBy);
+                    else note.Role = effect.Target;
                     note.Body = XafWorkflowEnvironment.Placeholder().Replace(effect.Value, m =>
                         Convert.ToString(x.Type.FindMember(m.Groups[1].Value)?.GetValue(x.Subject), CultureInfo.InvariantCulture) ?? "");
                     break;

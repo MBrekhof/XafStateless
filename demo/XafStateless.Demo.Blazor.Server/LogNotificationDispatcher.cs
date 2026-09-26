@@ -19,7 +19,8 @@ public sealed class LogNotificationDispatcher(IServiceScopeFactory scopes, ILogg
                 var pending = os.GetObjectsQuery<WorkflowNotification>().Where(n => n.State == NotificationState.Pending).OrderBy(n => n.CreatedUtc).ToList();
                 foreach (var n in pending)
                 {
-                    log.LogInformation("Notification to {Role}: {Body}", n.Role, n.Body);
+                    if (n.UserId is { } user) log.LogInformation("Notification to user {UserName} ({UserId}): {Body}", n.UserName, user, n.Body);
+                    else log.LogInformation("Notification to role {Role}: {Body}", n.Role, n.Body);
                     (n.State, n.Attempts) = (NotificationState.Sent, n.Attempts + 1);
                 }
                 os.CommitChanges();

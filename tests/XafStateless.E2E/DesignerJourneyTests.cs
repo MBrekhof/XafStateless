@@ -142,6 +142,12 @@ public class DesignerJourneyTests : PageTest
         await Nav(approver, "Workflow", "Workflow Task");
         await Expect(Row(approver, V1Request, "finance")).ToHaveCountAsync(0);   // the open-tasks list: nothing left for it
         await Expect(Row(approver, V2Request, "finance")).ToHaveCountAsync(0);
+
+        // 8. The approver started both requests, so the seeded Notify @requester reached them (XSM-014).
+        await Nav(approver, "Workflow", "Workflow Notification");
+        await Expect(approver.GetByRole(AriaRole.Gridcell, new() { Name = $"Your request {V1Request} was ordered", Exact = true })).ToBeVisibleAsync();
+        await Expect(approver.GetByRole(AriaRole.Gridcell, new() { Name = $"Your request {V2Request} was ordered", Exact = true })).ToBeVisibleAsync();
+        await Shot(approver, "08-requester-notifications");
     }
 
     // ---- helpers: one per UI gesture ----

@@ -4,7 +4,11 @@ public enum StateKind { Manual, Task, Wait, Decision, Final }
 
 public enum EffectKind { Notify, SetField }
 
-public sealed record EffectDef(EffectKind Kind, string Target, string Value);
+public sealed record EffectDef(EffectKind Kind, string Target, string Value)
+{
+    /// <summary>A Notify target that addresses the user who started the workflow, not a role (XSM-014).</summary>
+    public const string Requester = "@requester";
+}
 
 public sealed record StateDef(string Key, string Caption, StateKind Kind,
     string? TaskRole = null, int? WaitMinutes = null, IReadOnlyList<EffectDef>? OnEntry = null, IReadOnlyList<string>? Locked = null)

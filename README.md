@@ -59,7 +59,8 @@ More screenshots are in [`docs/screenshots/`](docs/screenshots/).
 Proof of concept, feature-complete for the demo:
 - the engine, validator, dry run and Mermaid export;
 - versioned definitions with publish-time validation;
-- the runtime, with Task, Wait, Decision, Notify and Set field steps;
+- the runtime, with Task, Wait, Decision, Notify and Set field steps; Notify addresses a role or the requester (the user
+  who started the workflow);
 - per-state field locks;
 - the permission matrix;
 - the diagram.

@@ -82,7 +82,7 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         var runtime = RuntimeScope.Allows(ctx);   // the scope counts only for the context it was opened for
         CheckInstances(ctx, instances, runtime);
         CheckTasks(ctx, tasks, runtime);
-        CheckNotifications(notifications, runtime);
+        CheckNotifications(ctx, notifications, runtime);
 
         // Persisted parents, one query per type. An effect's owner goes through its state, so effects are read first.
         var effectParents = PersistedParents<WorkflowEffect>(ctx, Existing(effects), nameof(WorkflowEffect.State));
@@ -172,6 +172,9 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
     static readonly string[] InstanceStateColumns =
         [nameof(WorkflowInstance.StateKey), nameof(WorkflowInstance.StateCaption), nameof(WorkflowInstance.EnteredUtc), nameof(WorkflowInstance.DueUtc)];
 
+    /// <summary>The requester, fixed from insert on, even when it was null and even inside the runtime scope (XSM-014).</summary>
+    static readonly string[] InstanceRequesterColumns = [nameof(WorkflowInstance.StartedById), nameof(WorkflowInstance.StartedBy)];
+
     /// <summary>Instances are created and deleted (hard, or soft through GCRecord) by the runtime only (inside its scope): a deleted
     /// instance would drop its subject's state locks. Definition, SubjectType and SubjectId are fixed once set; StateKey,
     /// StateCaption, EnteredUtc and DueUtc change only inside the runtime scope, for every role, Administrators too.
@@ -184,7 +187,7 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         if (modified.Count == 0) return;
         var fk = RawSql.ForeignKey<WorkflowInstance>(ctx, nameof(WorkflowInstance.Definition));
         var rows = RawSql.Rows<WorkflowInstance>(ctx, Id, modified.Select(e => e.Entity.ID),
-                [Id, fk, nameof(WorkflowInstance.SubjectType), nameof(WorkflowInstance.SubjectId), .. InstanceStateColumns])
+                [Id, fk, nameof(WorkflowInstance.SubjectType), nameof(WorkflowInstance.SubjectId), .. InstanceStateColumns, .. InstanceRequesterColumns])
             .ToDictionary(r => (Guid)r[0]!);
         foreach (var e in modified)
         {
@@ -193,6 +196,9 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
             for (var i = 0; i < now.Length; i++)
                 if (!IsUnset(row[i + 1]) && !Equals(row[i + 1], now[i]))
                     throw Refuse("a workflow instance's definition and subject are fixed once set.");
+            for (var i = 0; i < InstanceRequesterColumns.Length; i++)
+                if (!Same(e.Property(InstanceRequesterColumns[i]).CurrentValue, row[1 + now.Length + InstanceStateColumns.Length + i]))
+                    throw RefuseInstance("its requester is fixed when it starts.");
             if (runtime) continue;
             // The row was read live (RawSql skips GCRecord != 0), so any GCRecord set now is a soft delete.
             if (e.Property(GCRecord).CurrentValue is int gc && gc != 0) throw RefuseInstance(InstanceDeleted);
@@ -202,12 +208,29 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         }
     }
 
-    /// <summary>Notifications are written into the outbox by the runtime only (inside its scope). Delivery updates (State,
-    /// Attempts, LastError) by a dispatcher are not restricted here.</summary>
-    static void CheckNotifications(List<EntityEntry<WorkflowNotification>> notifications, bool runtime)
+    /// <summary>Notifications are written into the outbox by the runtime only (inside its scope). After insert the recipient
+    /// (Role, UserId, UserName), Body, Instance and CreatedUtc are fixed, for every caller; delivery updates (State, Attempts,
+    /// LastError) by a dispatcher, and deletes, are not restricted here. Judged against the database rows.</summary>
+    static void CheckNotifications(DbContext ctx, List<EntityEntry<WorkflowNotification>> notifications, bool runtime)
     {
         if (!runtime && notifications.Any(e => e.State == EntityState.Added))
             throw new UserFriendlyException("Workflow notification: notifications are created by the workflow runtime only.");
+        var modified = notifications.Where(e => e.State == EntityState.Modified).ToList();
+        if (modified.Count == 0) return;
+        var fk = RawSql.ForeignKey<WorkflowNotification>(ctx, nameof(WorkflowNotification.Instance));
+        string[] fixedColumns = [nameof(WorkflowNotification.Role), nameof(WorkflowNotification.UserId), nameof(WorkflowNotification.UserName),
+            nameof(WorkflowNotification.Body), fk, nameof(WorkflowNotification.CreatedUtc)];
+        var rows = RawSql.Rows<WorkflowNotification>(ctx, Id, modified.Select(e => e.Entity.ID), [Id, .. fixedColumns]).ToDictionary(r => (Guid)r[0]!);
+        foreach (var e in modified)
+        {
+            if (!rows.TryGetValue(e.Entity.ID, out var row)) throw new UserFriendlyException("Workflow notification: the notification does not exist.");
+            object? Now(string column) => column == fk
+                ? (e.Reference(nameof(WorkflowNotification.Instance)).CurrentValue as BaseObject)?.ID ?? (Guid?)e.Property(fk).CurrentValue
+                : e.Property(column).CurrentValue;
+            for (var i = 0; i < fixedColumns.Length; i++)
+                if (!Same(Now(fixedColumns[i]), row[1 + i]))
+                    throw new UserFriendlyException("Workflow notification: its recipient and text are fixed once written; only delivery (State, Attempts, LastError) may change.");
+        }
     }
 
     static UserFriendlyException RefuseTask(string message) => new($"Workflow task: {message}");

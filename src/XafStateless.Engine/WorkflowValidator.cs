@@ -60,7 +60,11 @@ public static class WorkflowValidator
             }
             foreach (var e in s.Effects)
             {
-                if (e.Kind == EffectKind.Notify && !env.RoleExists(e.Target)) errs.Add($"role '{e.Target}' does not exist");
+                if (e.Kind == EffectKind.Notify && e.Target == EffectDef.Requester)
+                {
+                    if (env.RoleExists(EffectDef.Requester)) errs.Add($"a role named '{EffectDef.Requester}' conflicts with the requester recipient");
+                }
+                else if (e.Kind == EffectKind.Notify && !env.RoleExists(e.Target)) errs.Add($"role '{e.Target}' does not exist");
                 if (env.CheckEffect(e) is { } err) errs.Add($"effect on '{s.Key}': {err}");
             }
             foreach (var m in s.LockedMembers)

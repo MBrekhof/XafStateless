@@ -230,6 +230,41 @@ public class PermissionTests : IClassFixture<TestDb>
         Assert.Equal(2, draft.Version);
     }
 
+    [Fact] public void Participants_see_their_own_requester_notifications_only()   // XSM-014
+    {
+        var def = Fixtures.PurchaseRequest() with { Name = $"pr-{Guid.NewGuid():N}" };
+        def = def with { States = def.States.Select(s => s.Key == "draft" ? s with { OnEntry = [new(EffectKind.Notify, EffectDef.Requester, "Started: {Title}")] } : s).ToList() };
+        var name = Publish(def);
+        var other = $"approver2-{Guid.NewGuid():N}";   // shares the Approvers role with 'approver'
+        using (var os = db.NewObjectSpace())
+        {
+            var u = os.CreateObject<ApplicationUser>();
+            (u.UserName, u.IsActive) = (other, true);
+            u.SetPassword("");
+            u.Roles.Add(os.FirstOrDefault<PermissionPolicyRole>(r => r.Name == "Approvers"));
+            os.CommitChanges();
+            ((ISecurityUserWithLoginInfo)u).CreateUserLoginInfo(SecurityDefaults.PasswordAuthentication, os.GetKeyValueAsString(u));
+            os.CommitChanges();
+        }
+        using var approverSpace = LogOn(Approver, out var security).CreateObjectSpace();
+        var pr = approverSpace.CreateObject<PurchaseRequest>();
+        (pr.Title, pr.Amount) = ("Mine", 5);
+        approverSpace.CommitChanges();
+        Ok(rt.Start(new WorkflowCaller(Approver, "Approvers".Equals, approverSpace, db.NewObjectSpace, security, (Guid)security.UserId), typeof(PurchaseRequest), pr.ID, name));
+        Guid noteId;
+        using (var check = db.NewObjectSpace())
+            noteId = check.GetObjectsQuery<WorkflowNotification>().Single(n => n.Instance!.SubjectId == pr.ID).ID;
+
+        using (var mine = LogOn(Approver).CreateObjectSpace())
+        {
+            Assert.NotNull(mine.GetObjectByKey<WorkflowNotification>(noteId));
+            Assert.True(mine.GetObjectsQuery<WorkflowNotification>().Any(n => n.ID == noteId));
+        }
+        using var theirs = LogOn(other).CreateObjectSpace();
+        Assert.Null(theirs.GetObjectByKey<WorkflowNotification>(noteId));
+        Assert.False(theirs.GetObjectsQuery<WorkflowNotification>().Any(n => n.ID == noteId));
+    }
+
     [Fact] public void Designer_can_publish_under_security()
     {
         using var provider = LogOn(Designer);
