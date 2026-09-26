@@ -1,8 +1,11 @@
+using System.Globalization;
 using DevExpress.ExpressApp;
+using DevExpress.ExpressApp.EFCore;
 using DevExpress.Persistent.BaseImpl.EF;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using XafStateless.Engine;
 using XafStateless.Module.BusinessObjects;
 
 namespace XafStateless.Module.Services;
@@ -18,6 +21,9 @@ namespace XafStateless.Module.Services;
 /// with <see cref="RuntimeScope.Allow"/> (one per SetField) are exempt; every other modified member is still checked.</item>
 /// <item>Outside a runtime scope the Workflow link cannot change, clearing included; it is checked first, so clearing it in
 /// the same save cannot dodge a lock.</item>
+/// <item>Outside a runtime scope a subject whose persisted instance is in a non-Final state cannot be deleted, hard
+/// (EntityState.Deleted) or soft (GCRecord going from unset to set): that would orphan its instance and tasks, and a Wait
+/// state's timer would fail on every tick. Subjects in a Final state, or without a workflow, delete normally.</item>
 /// </list>
 /// A user save racing a transition collides on the subject's lock version (every command Touches the subject); a merged
 /// retry is a new SavingChanges pass, which this guard judges against the new persisted state.
@@ -43,21 +49,33 @@ public sealed class StateLockGuard : SaveChangesInterceptor
 
     const string Id = nameof(BaseObject.ID);
     const string Link = nameof(IWorkflowSubject.Workflow);
+    const string GCRecord = EFCoreDeferredDeletionInterceptor.GCRecordFieldName;
+
+    /// <summary>EF Deleted, or XAF deferred deletion's Modified with GCRecord going from unset to set.</summary>
+    static bool IsDelete(EntityEntry e) =>
+        e.State == EntityState.Deleted
+        || (e.State == EntityState.Modified && e.Metadata.FindProperty(GCRecord) != null
+            && e.Property(GCRecord) is { CurrentValue: int now, OriginalValue: null or 0 } && now != 0);
 
     static void Check(DbContext? ctx)
     {
         if (ctx == null) return;
         ctx.ChangeTracker.DetectChanges();
         var subjects = ctx.ChangeTracker.Entries()
-            .Where(e => e.Entity is IWorkflowSubject && e.State is EntityState.Added or EntityState.Modified).ToList();
+            .Where(e => e.Entity is IWorkflowSubject && e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted).ToList();
         if (subjects.Count == 0) return;
         var scope = RuntimeScope.Allows(ctx) ? RuntimeScope.Current : null;
 
-        // The persisted link of every modified subject: one query per subject type.
+        // The persisted link of every existing subject: one query per subject type.
         var persistedLink = new Dictionary<Guid, Guid?>();
-        foreach (var group in subjects.Where(e => e.State == EntityState.Modified).GroupBy(e => e.Metadata))
+        foreach (var group in subjects.Where(e => e.State != EntityState.Added).GroupBy(e => e.Metadata))
             foreach (var row in RawSql.Rows(ctx, group.Key.ClrType, Id, group.Select(e => ((IWorkflowSubject)e.Entity).ID), Id, ForeignKey(group.Key)))
                 persistedLink[(Guid)row[0]!] = (Guid?)row[1];
+
+        var defFk = RawSql.ForeignKey<WorkflowInstance>(ctx, nameof(WorkflowInstance.Definition));
+        var stateFk = RawSql.ForeignKey<WorkflowState>(ctx, nameof(WorkflowState.Definition));
+        if (scope == null) CheckDeletes(ctx, subjects.Where(IsDelete).ToList(), persistedLink, defFk, stateFk);
+        subjects.RemoveAll(e => e.State == EntityState.Deleted);
 
         foreach (var e in subjects)
         {
@@ -71,11 +89,9 @@ public sealed class StateLockGuard : SaveChangesInterceptor
         if (modified.Count == 0) return;
 
         // Persisted instance state, then that state's locks and caption (definitions are immutable once Published).
-        var defFk = RawSql.ForeignKey<WorkflowInstance>(ctx, nameof(WorkflowInstance.Definition));
         var instances = RawSql.Rows<WorkflowInstance>(ctx, Id, modified.Select(e => persistedLink[((IWorkflowSubject)e.Entity).ID]!.Value),
                 Id, defFk, nameof(WorkflowInstance.StateKey))
             .ToDictionary(r => (Guid)r[0]!, r => (Definition: (Guid?)r[1], StateKey: (string)r[2]!));
-        var stateFk = RawSql.ForeignKey<WorkflowState>(ctx, nameof(WorkflowState.Definition));
         var locks = RawSql.Rows<WorkflowState>(ctx, stateFk, instances.Values.Select(i => i.Definition).OfType<Guid>(),
                 stateFk, nameof(WorkflowState.Key), nameof(WorkflowState.Caption), nameof(WorkflowState.LockedMembers))
             .ToDictionary(r => ((Guid)r[0]!, (string)r[1]!), r => (Caption: (string)r[2]!, Members: DefinitionMapper.Members((string?)r[3])));
@@ -108,6 +124,29 @@ public sealed class StateLockGuard : SaveChangesInterceptor
                 if (row == null || !Same(e.Property(member).CurrentValue, row[1 + columns.IndexOf(member)]))
                     throw new UserFriendlyException($"'{member}' is locked in state '{caption}'");
             }
+        }
+    }
+
+    /// <summary>Refuses deleting a subject whose persisted instance is in a non-Final persisted state. No instance or state row
+    /// (a write that bypassed EF) means nothing to orphan.</summary>
+    static void CheckDeletes(DbContext ctx, List<EntityEntry> deletes, Dictionary<Guid, Guid?> persistedLink, string defFk, string stateFk)
+    {
+        var linked = deletes.Where(e => persistedLink.GetValueOrDefault(((IWorkflowSubject)e.Entity).ID) != null).ToList();
+        if (linked.Count == 0) return;
+        var instances = RawSql.Rows<WorkflowInstance>(ctx, Id, linked.Select(e => persistedLink[((IWorkflowSubject)e.Entity).ID]!.Value),
+                Id, defFk, nameof(WorkflowInstance.StateKey))
+            .ToDictionary(r => (Guid)r[0]!, r => (Definition: (Guid?)r[1], StateKey: (string)r[2]!));
+        var states = RawSql.Rows<WorkflowState>(ctx, stateFk, instances.Values.Select(i => i.Definition).OfType<Guid>(),
+                stateFk, nameof(WorkflowState.Key), nameof(WorkflowState.Caption), nameof(WorkflowState.Kind))
+            .ToDictionary(r => ((Guid)r[0]!, (string)r[1]!), r => (Caption: (string)r[2]!, Kind: (StateKind)(int)r[3]!));
+        foreach (var e in linked)
+        {
+            var subject = (IWorkflowSubject)e.Entity;
+            if (!instances.TryGetValue(persistedLink[subject.ID]!.Value, out var instance) || instance.Definition is not { } def
+                || !states.TryGetValue((def, instance.StateKey), out var state) || state.Kind == StateKind.Final)
+                continue;
+            var caption = Convert.ToString(XafTypesInfo.Instance.FindTypeInfo(e.Metadata.ClrType)?.DefaultMember?.GetValue(e.Entity), CultureInfo.InvariantCulture);
+            throw new UserFriendlyException($"'{(string.IsNullOrEmpty(caption) ? e.Metadata.ClrType.Name : caption)}' cannot be deleted while its workflow is in '{state.Caption}'");
         }
     }
 

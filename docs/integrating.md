@@ -100,7 +100,11 @@ protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
     dispatcher's update, a delete) passes.
 - `StateLockGuard`:
   - refuses a save that changes a field locked in the subject's current state;
-  - refuses any change to the subject's `Workflow` link.
+  - refuses any change to the subject's `Workflow` link;
+  - refuses deleting a subject (hard, or soft through `GCRecord`) while its workflow is in a non-Final state, for every
+    role, Administrators too: "'Chair' cannot be deleted while its workflow is in 'Approval'". A subject whose workflow
+    reached a Final state, or that has none, deletes normally. Otherwise the instance and its tasks would be orphaned,
+    and a subject deleted in a Wait state would fail the timer on every tick.
 
 ## 4. Services
 
@@ -172,6 +176,13 @@ PermissionPolicyRole CreateRole(string name, Action<PermissionPolicyRole> grant)
   - Name the role **before** the call. It throws `ArgumentException` for an unnamed role.
 - **The designer actions check role names.** New version, Validate, Publish and Dry run show only to users holding a
   role named `Administrators` or `WorkflowDesigners`. Use exactly those names.
+- **Start and Transition need Write on the subject.** Reading a subject is not enough to start its workflow or to fire
+  one of its manual transitions, even one without a required role: the runtime checks Write on the subject through the
+  caller's security strategy (`IsGrantedExtensions.CanWrite`) and refuses with "changing the workflow of this
+  PurchaseRequest requires write access to it". A caller that cannot read the subject at all is refused as well. Deciding a
+  task is authorized by the task's role instead. The timer runs as the system and is not checked.
+- **Role membership is read from the logged-on user** (`IPermissionPolicyUser.Roles`) and stays cached until the next
+  logon, so a role granted or revoked meanwhile changes what the workflow actions allow only after the user logs on again.
 - **Role names in workflows are role names.** A Task state's role, a transition's required role and a Notify
   recipient are all names of `PermissionPolicyRole` rows. The lookups read them through a non-secured object space, so
   users need no read permission on roles.
@@ -199,7 +210,9 @@ public class PurchaseRequest : BaseObject, IWorkflowSubject
 - `Workflow` is the link to the running instance. The runtime owns it and the guard refuses user changes. Its display
   text is the current state's caption, so list views can show and filter on it.
 - On a subject's detail view, the module adds the **Start workflow** action (Published definitions whose target type is
-  this class) and the **Transition** action (the manual transitions the user may fire now).
+  this class) and the **Transition** action (the manual transitions the user may fire now). Both are hidden from a user
+  without Write on the subject.
+- A subject cannot be deleted while its workflow is in a non-Final state (see the guards in step 3).
 - The members that effects (Set field) and field locks can use are the public, persistent, writable, browsable scalar
   members: string, number, bool, DateTime, Guid and enum. `ID`, `Workflow`, the lock field, references and collections
   are excluded.
@@ -245,7 +258,8 @@ scheduler, not both.
 
 A Notify effect writes a `WorkflowNotification` row (the outbox), in the same commit as the state change:
 - `Role`: the recipient role name;
-- `Body`: the template with `{Member}` placeholders filled in;
+- `Body`: the template with `{Member}` placeholders filled in. A placeholder reads any member of the subject, whatever the
+  recipient role's member-level Read permissions: designers are trusted not to put hidden members into a notification;
 - `State` = `Pending`, plus `Attempts`, `LastError` and `CreatedUtc`.
 
 The host delivers the rows. Read the `Pending` rows through a non-secured object space, deliver each one (resolve the
@@ -280,8 +294,12 @@ and run **Start workflow**. `tests/XafStateless.E2E` walks this whole path again
 - **The guards are SaveChanges interceptors.** EF Core `ExecuteUpdate`/`ExecuteDelete`, raw SQL, and anything else that
   skips `SaveChanges` bypasses them, including immutable published definitions, runtime-owned rows and field locks.
   Keep such writes away from workflow tables and locked subject fields.
-- **Single app instance** for the timer and the notification dispatcher. They take no lease, so two nodes would both
-  fire the same timers and send the same notifications.
+- **Single app instance** for the notification dispatcher. It takes no lease, so two nodes would both send the same
+  notifications. The timer is safe on several nodes: each timer command Touches the instance, so the second node finds the
+  timer no longer due, or loses the race and skips it.
+- **Lock value comparisons are conservative.** The lock guard compares a locked member's value with its raw database
+  column. For a value-converted member, or an enum not stored as int, the two may differ even when unchanged: the save is
+  then refused, never allowed.
 - **`PermissionPolicyRole` roles and `IPermissionPolicyUser` users.** Role names come from `PermissionPolicyRole`, and
   the current user's roles from `IPermissionPolicyUser.Roles`.
 - **Criteria members are top-level.** A transition's criteria and the lock and effect members use the subject's own

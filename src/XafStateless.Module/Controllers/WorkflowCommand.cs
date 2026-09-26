@@ -1,4 +1,5 @@
 using DevExpress.ExpressApp;
+using DevExpress.ExpressApp.Security;
 using DevExpress.Persistent.Base;
 using Microsoft.Extensions.DependencyInjection;
 using XafStateless.Module.BusinessObjects;
@@ -18,7 +19,8 @@ public static class WorkflowCommand
     {
         var (roles, services) = (RoleNames(app), app.ServiceProvider);
         return new(app.Security?.UserName ?? "", roles.Contains, secured,
-            () => services.GetRequiredService<INonSecuredObjectSpaceFactory>().CreateNonSecuredObjectSpace(typeof(WorkflowInstance)));
+            () => services.GetRequiredService<INonSecuredObjectSpaceFactory>().CreateNonSecuredObjectSpace(typeof(WorkflowInstance)),
+            app.Security as IRequestSecurityStrategy);
     }
 
     /// <summary>Commits pending changes of <paramref name="os"/>. A refused save (validation, security, a guard) shows its

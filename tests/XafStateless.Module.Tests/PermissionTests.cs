@@ -3,6 +3,7 @@ using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.EFCore.DataLocking;
 using DevExpress.ExpressApp.Security;
 using Microsoft.EntityFrameworkCore;
+using DevExpress.Persistent.Base;
 using DevExpress.Persistent.BaseImpl.EF.PermissionPolicy;
 using XafStateless.Demo.Module.BusinessObjects;
 using XafStateless.Engine;
@@ -16,7 +17,7 @@ namespace XafStateless.Module.Tests;
 /// logged on as an approver and as a designer.</summary>
 public class PermissionTests : IClassFixture<TestDb>
 {
-    const string Approver = "approver", Designer = "designer", Others = "Others";
+    const string Approver = "approver", Designer = "designer", Reader = "reader", Outsider = "outsider", Others = "Others";
     readonly TestDb db;
     readonly WorkflowRuntime rt = new(new DefinitionStore(), TimeProvider.System);
     readonly DefinitionService svc = new(new DefinitionStore());
@@ -33,7 +34,12 @@ public class PermissionTests : IClassFixture<TestDb>
         var designers = os.CreateObject<PermissionPolicyRole>();
         designers.Name = "WorkflowDesigners";
         WorkflowPermissions.GrantDesigner(designers);
-        foreach (var (name, role) in new[] { (Approver, approvers), (Designer, designers) })
+        var readers = os.CreateObject<PermissionPolicyRole>();   // Read-only on the subject type
+        readers.Name = "Readers";
+        readers.AddTypePermission<PurchaseRequest>(SecurityOperations.Read, SecurityPermissionState.Allow);
+        var outsiders = os.CreateObject<PermissionPolicyRole>();   // nothing on the subject type
+        outsiders.Name = "Outsiders";
+        foreach (var (name, role) in new[] { (Approver, approvers), (Designer, designers), (Reader, readers), (Outsider, outsiders) })
         {
             var user = os.CreateObject<ApplicationUser>();
             (user.UserName, user.IsActive) = (name, true);
@@ -95,18 +101,19 @@ public class PermissionTests : IClassFixture<TestDb>
         return t;
     }
 
-    WorkflowCaller Caller(IObjectSpace secured, string name, params string[] roles) => new(name, roles.Contains, secured, db.NewObjectSpace);
+    WorkflowCaller Caller(IObjectSpace secured, IRequestSecurityStrategy security, string name, params string[] roles) =>
+        new(name, roles.Contains, secured, db.NewObjectSpace, security);
 
     static void Ok(RunResult r) => Assert.True(r.Ok, r.Message);
 
     /// <summary>A small request started and submitted by the approver; returns (request id, open task id).</summary>
-    (Guid Request, Guid Task) Submitted(IObjectSpace approverSpace)
+    (Guid Request, Guid Task) Submitted(IObjectSpace approverSpace, IRequestSecurityStrategy security)
     {
         var name = PublishPurchaseRequest();
         var pr = approverSpace.CreateObject<PurchaseRequest>();
         (pr.Title, pr.Amount) = ("Chair", 50);
         approverSpace.CommitChanges();
-        var c = Caller(approverSpace, Approver, "Approvers");
+        var c = Caller(approverSpace, security, Approver, "Approvers");
         Ok(rt.Start(c, typeof(PurchaseRequest), pr.ID, name));
         Ok(rt.Fire(c, typeof(PurchaseRequest), pr.ID, "Submit"));
         using var check = db.NewObjectSpace();
@@ -116,11 +123,11 @@ public class PermissionTests : IClassFixture<TestDb>
 
     [Fact] public void Approver_can_start_fire_and_decide()
     {
-        using var provider = LogOn(Approver);
+        using var provider = LogOn(Approver, out var security);
         using var user = provider.CreateObjectSpace();
         Assert.IsType<SecuredEFCoreObjectSpace>(user);
-        var (request, task) = Submitted(user);
-        var c = Caller(user, Approver, "Approvers");
+        var (request, task) = Submitted(user, security);
+        var c = Caller(user, security, Approver, "Approvers");
         Assert.Equal(["Approve", "Reject"], rt.Outcomes(c, task));
 
         Ok(rt.Decide(c, task, "Approve"));
@@ -136,7 +143,7 @@ public class PermissionTests : IClassFixture<TestDb>
     {
         using var provider = LogOn(Approver, out var security);
         Guid task;
-        using (var user = provider.CreateObjectSpace()) (_, task) = Submitted(user);
+        using (var user = provider.CreateObjectSpace()) (_, task) = Submitted(user, security);
         using (var user = provider.CreateObjectSpace())
         {
             var t = user.GetObjectByKey<WorkflowTask>(task);
@@ -154,7 +161,7 @@ public class PermissionTests : IClassFixture<TestDb>
     {
         using var provider = LogOn(Approver, out var security);
         Guid request;
-        using (var user = provider.CreateObjectSpace()) (request, _) = Submitted(user);
+        using (var user = provider.CreateObjectSpace()) (request, _) = Submitted(user, security);
         using (var user = provider.CreateObjectSpace())
         {
             var pr = user.GetObjectByKey<PurchaseRequest>(request);
@@ -247,9 +254,9 @@ public class PermissionTests : IClassFixture<TestDb>
             foreignNote = os.GetObjectsQuery<WorkflowNotification>().Single(n => n.Instance!.SubjectId == foreignRequest).ID;
         }
 
-        using var provider = LogOn(Approver);
+        using var provider = LogOn(Approver, out var security);
         Guid ownRequest, ownTask;
-        using (var user = provider.CreateObjectSpace()) (ownRequest, ownTask) = Submitted(user);
+        using (var user = provider.CreateObjectSpace()) (ownRequest, ownTask) = Submitted(user, security);
         using (var user = provider.CreateObjectSpace())
         {
             Assert.Null(user.GetObjectByKey<WorkflowTask>(foreignTask));
@@ -263,7 +270,7 @@ public class PermissionTests : IClassFixture<TestDb>
         }
         // The runtime still decides for the approver through its secured read proof.
         using (var user = provider.CreateObjectSpace())
-            Ok(rt.Decide(Caller(user, Approver, "Approvers"), ownTask, "Approve"));
+            Ok(rt.Decide(Caller(user, security, Approver, "Approvers"), ownTask, "Approve"));
     }
 
     [Fact] public void Approver_reads_only_instances_of_granted_subject_types()
@@ -278,14 +285,89 @@ public class PermissionTests : IClassFixture<TestDb>
             using (RuntimeScope.Open(((DevExpress.ExpressApp.EFCore.EFCoreObjectSpace)os).DbContext)) os.CommitChanges();   // instances are runtime-created
             foreignInstance = i.ID;
         }
-        using var provider = LogOn(Approver);
+        using var provider = LogOn(Approver, out var security);
         Guid ownRequest;
-        using (var user = provider.CreateObjectSpace()) (ownRequest, _) = Submitted(user);
+        using (var user = provider.CreateObjectSpace()) (ownRequest, _) = Submitted(user, security);
         using (var user = provider.CreateObjectSpace())
         {
             Assert.Null(user.GetObjectByKey<WorkflowInstance>(foreignInstance));
             Assert.Empty(user.GetObjectsQuery<WorkflowInstance>().Where(i => i.SubjectType == "Some.Other.Subject").ToList());
             Assert.NotNull(user.GetObjectByKey<PurchaseRequest>(ownRequest).Workflow);             // its own subject's instance
         }
+    }
+
+    const string NeedsWrite = "changing the workflow of this PurchaseRequest requires write access to it";
+    const string CannotRead = "the PurchaseRequest does not exist or cannot be read";
+
+    /// <summary>A new request (amount 50) under a freshly published definition, optionally started by an admin-style caller.</summary>
+    (Guid Request, string Definition) NewRequest(bool start)
+    {
+        var name = PublishPurchaseRequest();
+        Guid id;
+        using (var os = db.NewObjectSpace())
+        {
+            var pr = os.CreateObject<PurchaseRequest>();
+            (pr.Title, pr.Amount) = ("Chair", 50);
+            os.CommitChanges();
+            id = pr.ID;
+        }
+        if (start) Ok(rt.Start(db.Caller("admin", "Approvers"), typeof(PurchaseRequest), id, name));
+        return (id, name);
+    }
+
+    string? StateOf(Guid request)
+    {
+        using var check = db.NewObjectSpace();
+        return check.GetObjectByKey<PurchaseRequest>(request).Workflow?.StateKey;
+    }
+
+    [Fact] public void Read_only_caller_cannot_start_or_fire()
+    {
+        using var provider = LogOn(Reader, out var security);
+        var (fresh, name) = NewRequest(false);
+        var (started, _) = NewRequest(true);   // in draft; Submit has no RequiredRole
+        using (var user = provider.CreateObjectSpace())
+        {
+            Assert.NotNull(user.GetObjectByKey<PurchaseRequest>(fresh));   // control: the subject is readable
+            var c = Caller(user, security, Reader, "Readers");
+            var start = rt.Start(c, typeof(PurchaseRequest), fresh, name);
+            var fire = rt.Fire(c, typeof(PurchaseRequest), started, "Submit");
+            Assert.Equal((false, NeedsWrite), (start.Ok, start.Message));
+            Assert.Equal((false, NeedsWrite), (fire.Ok, fire.Message));
+            Assert.Empty(rt.Available(c, typeof(PurchaseRequest), started));
+        }
+        Assert.Null(StateOf(fresh));
+        Assert.Equal("draft", StateOf(started));
+    }
+
+    [Fact] public void Caller_who_cannot_read_subject_cannot_start_or_fire()
+    {
+        using var provider = LogOn(Outsider, out var security);
+        var (fresh, name) = NewRequest(false);
+        var (started, _) = NewRequest(true);
+        using (var user = provider.CreateObjectSpace())
+        {
+            Assert.Null(user.GetObjectByKey<PurchaseRequest>(fresh));
+            var c = Caller(user, security, Outsider, "Outsiders");
+            var start = rt.Start(c, typeof(PurchaseRequest), fresh, name);
+            var fire = rt.Fire(c, typeof(PurchaseRequest), started, "Submit");
+            Assert.Equal((false, CannotRead), (start.Ok, start.Message));
+            Assert.Equal((false, CannotRead), (fire.Ok, fire.Message));
+        }
+        Assert.Null(StateOf(fresh));
+        Assert.Equal("draft", StateOf(started));
+    }
+
+    [Fact] public void Secured_caller_without_security_strategy_is_refused()
+    {
+        // Fail closed: a secured space without the strategy that secures it cannot prove write access.
+        using var provider = LogOn(Approver);
+        var (fresh, name) = NewRequest(false);
+        using (var user = provider.CreateObjectSpace())
+        {
+            var r = rt.Start(new WorkflowCaller(Approver, "Approvers".Equals, user, db.NewObjectSpace), typeof(PurchaseRequest), fresh, name);
+            Assert.Equal((false, NeedsWrite), (r.Ok, r.Message));
+        }
+        Assert.Null(StateOf(fresh));
     }
 }

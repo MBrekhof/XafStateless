@@ -3,6 +3,7 @@ using DevExpress.Data.Filtering;
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.DC;
 using DevExpress.ExpressApp.EFCore;
+using DevExpress.ExpressApp.Security;
 using XafStateless.Engine;
 using XafStateless.Module.BusinessObjects;
 
@@ -11,8 +12,11 @@ namespace XafStateless.Module.Services;
 public sealed record RunResult(bool Ok, string Message, IReadOnlyList<Step> Steps);
 
 /// <summary>Who is acting. Secured = the caller's secured object space (read + authorization only, never written by the runtime);
-/// NewCommandSpace = a factory for non-secured object spaces (INonSecuredObjectSpaceFactory), in which the runtime does its writes.</summary>
-public sealed record WorkflowCaller(string Name, Func<string, bool> InRole, IObjectSpace? Secured, Func<IObjectSpace> NewCommandSpace)
+/// NewCommandSpace = a factory for non-secured object spaces (INonSecuredObjectSpaceFactory), in which the runtime does its writes;
+/// Security = the strategy that secures <see cref="Secured"/>, for the Write check of Start and Fire. A secured space
+/// (<see cref="ISecuredObjectSpace"/>) without it is refused; a plain space (no security configured) needs none.</summary>
+public sealed record WorkflowCaller(string Name, Func<string, bool> InRole, IObjectSpace? Secured, Func<IObjectSpace> NewCommandSpace,
+    IRequestSecurityStrategy? Security = null)
 {
     public static WorkflowCaller System(Func<IObjectSpace> newCommandSpace) => new("system", _ => true, null, newCommandSpace);
 }
@@ -53,7 +57,7 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
     }
 
     public RunResult Start(WorkflowCaller c, Type subjectType, Guid subjectId, string definitionName) =>
-        Run(c, By.Subject, subjectType, subjectId, x =>
+        Run(c, By.Subject, subjectType, subjectId, write: true, x =>
         {
             if (x.Subject.Workflow != null) return "the workflow has already started";
             if (store.Published(x.Os, definitionName) is not { } pinned) return $"'{definitionName}' has no published version";
@@ -69,7 +73,7 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
     public IReadOnlyList<TransitionDef> Available(WorkflowCaller c, Type subjectType, Guid subjectId)
     {
         using var os = c.NewCommandSpace();
-        var (x, refusal) = Load(os, c, By.Subject, subjectType, subjectId);
+        var (x, refusal) = Load(os, c, By.Subject, subjectType, subjectId, write: true);
         if (refusal != null || x!.Def == null || x.Def.State(x.Instance!.StateKey).Kind != StateKind.Manual) return [];
         return Machine(x).Available().Where(t => t.RequiredRole is null || c.InRole(t.RequiredRole)).ToList();
     }
@@ -77,7 +81,7 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
     public IReadOnlyList<string> Outcomes(WorkflowCaller c, Guid taskId)
     {
         using var os = c.NewCommandSpace();
-        var (x, refusal) = Load(os, c, By.Task, null, taskId);
+        var (x, refusal) = Load(os, c, By.Task, null, taskId, write: false);
         if (refusal != null || x!.Task is not { State: TaskState.Open } task || task.StateKey != x.Instance!.StateKey || !c.InRole(task.Role)) return [];
         return OutcomesOf(x.Def!, task.StateKey);
     }
@@ -85,7 +89,7 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
     static List<string> OutcomesOf(WorkflowDef def, string stateKey) => def.From(stateKey).Select(t => t.Trigger).Distinct().ToList();
 
     public RunResult Fire(WorkflowCaller c, Type subjectType, Guid subjectId, string trigger) =>
-        Run(c, By.Subject, subjectType, subjectId, x =>
+        Run(c, By.Subject, subjectType, subjectId, write: true, x =>
         {
             if (x.Instance == null) return "the workflow has not started";
             var state = x.Def!.State(x.Instance.StateKey);
@@ -105,7 +109,7 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
         }, x => $"'{trigger}' done.");
 
     public RunResult Decide(WorkflowCaller c, Guid taskId, string outcome) =>
-        Run(c, By.Task, null, taskId, x =>
+        Run(c, By.Task, null, taskId, write: false, x =>
         {
             var task = x.Task!;
             if (task.State != TaskState.Open) return AlreadyDecided;
@@ -134,7 +138,7 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
         {
             try
             {
-                var r = Run(system, By.Instance, null, id, x =>
+                var r = Run(system, By.Instance, null, id, write: false, x =>
                 {
                     if (x.Def!.State(x.Instance!.StateKey).Kind != StateKind.Wait || x.Instance.DueUtc is not { } at || at > now)
                         return NotDue;   // another writer moved it meanwhile
@@ -156,15 +160,15 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
     static string NotPossible(string trigger, string state) => $"'{trigger}' is not possible from '{state}'";
 
     /// <summary>The one command loop behind Start, Fire, Decide and each timer. <paramref name="apply"/> returns a refusal
-    /// (nothing is committed) or null after running the machine.</summary>
-    RunResult Run(WorkflowCaller c, By by, Type? subjectType, Guid id, Func<Cmd, string?> apply, Func<Cmd, string> done)
+    /// (nothing is committed) or null after running the machine. <paramref name="write"/>: the caller needs Write on the subject.</summary>
+    RunResult Run(WorkflowCaller c, By by, Type? subjectType, Guid id, bool write, Func<Cmd, string?> apply, Func<Cmd, string> done)
     {
         for (var attempt = 1; ; attempt++)
         {
             try
             {
                 using var os = c.NewCommandSpace();
-                var (x, refusal) = Load(os, c, by, subjectType, id);
+                var (x, refusal) = Load(os, c, by, subjectType, id, write);
                 if (refusal != null) return new(false, refusal, []);
                 TestHook?.Invoke("after-load", attempt);
                 // Bound to this command's DbContext; disposed only after CommitChanges returned or threw.
@@ -185,8 +189,9 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
     }
 
     /// <summary>Reloads subject, instance and task by id and checks the links between them (any mismatch: <see cref="LinkMismatch"/>),
-    /// and that the caller's secured object space can read the subject.</summary>
-    (Cmd? Cmd, string? Refusal) Load(IObjectSpace os, WorkflowCaller c, By by, Type? subjectType, Guid id)
+    /// and that the caller's secured object space can read the subject; with <paramref name="write"/>, that the caller may also
+    /// write it (Start and Fire change the subject's workflow; Decide is authorized by the task's role instead).</summary>
+    (Cmd? Cmd, string? Refusal) Load(IObjectSpace os, WorkflowCaller c, By by, Type? subjectType, Guid id, bool write)
     {
         WorkflowTask? task = null;
         WorkflowInstance? instance = null;
@@ -204,9 +209,11 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
         var type = subjectType == null ? null : os.TypesInfo.FindTypeInfo(subjectType);
         if (type is not { IsPersistent: true } || !typeof(IWorkflowSubject).IsAssignableFrom(type.Type) || type.KeyMember?.MemberType != typeof(Guid))
             return (null, LinkMismatch);
-        if (os.GetObjectByKey(type.Type, subjectId) is not IWorkflowSubject subject
-            || (c.Secured != null && c.Secured.GetObjectByKey(type.Type, subjectId) == null))
+        var secured = c.Secured?.GetObjectByKey(type.Type, subjectId);
+        if (os.GetObjectByKey(type.Type, subjectId) is not IWorkflowSubject subject || (c.Secured != null && secured == null))
             return (null, $"the {type.Name} does not exist or cannot be read");
+        if (write && c.Secured is ISecuredObjectSpace && c.Security?.CanWrite(c.Secured, secured!) != true)
+            return (null, $"changing the workflow of this {type.Name} requires write access to it");
         instance ??= by == By.Subject ? subject.Workflow : null;
         if (instance != null && (instance.SubjectType != type.Type.FullName || instance.SubjectId != subject.ID
                                  || subject.Workflow != instance || instance.Definition == null))

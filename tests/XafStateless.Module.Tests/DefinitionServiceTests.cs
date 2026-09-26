@@ -66,13 +66,13 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         return e;
     }
 
-    /// <summary>draft -submit-> review (task, Approvers) -approve-> ordered (final, 2 effects) / -reject-> rejected (final).</summary>
+    /// <summary>draft -submit-> review (task, Approvers, locks Amount) -approve-> ordered (final, 2 effects) / -reject-> rejected (final).</summary>
     static WorkflowDefinition Draft(IObjectSpace os, string name)
     {
         var d = os.CreateObject<WorkflowDefinition>();
         (d.Name, d.TargetTypeName, d.Version, d.State, d.InitialStateKey) = (name, typeof(PurchaseRequest).FullName!, 1, DefinitionState.Draft, "draft");
         S(os, d, "draft", StateKind.Manual);
-        S(os, d, "review", StateKind.Task, "Approvers");
+        S(os, d, "review", StateKind.Task, "Approvers").LockedMembers = "Amount";   // a lock, so the deep copy covers locks too
         var ordered = S(os, d, "ordered", StateKind.Final);
         E(os, ordered, EffectKind.SetField, "Ordered", "true");
         E(os, ordered, EffectKind.Notify, "Approvers", "{Title} was ordered");
@@ -739,8 +739,8 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
     {
         public bool Equals(WorkflowDef? a, WorkflowDef? b) =>
             a!.Name == b!.Name && a.Version == b.Version && a.InitialState == b.InitialState
-            && a.States.OrderBy(s => s.Key).Select(s => (s.Key, s.Caption, s.Kind, s.TaskRole, s.WaitMinutes, string.Join("|", s.Effects)))
-               .SequenceEqual(b.States.OrderBy(s => s.Key).Select(s => (s.Key, s.Caption, s.Kind, s.TaskRole, s.WaitMinutes, string.Join("|", s.Effects))))
+            && a.States.OrderBy(s => s.Key).Select(s => (s.Key, s.Caption, s.Kind, s.TaskRole, s.WaitMinutes, string.Join("|", s.Effects), string.Join("|", s.LockedMembers)))
+               .SequenceEqual(b.States.OrderBy(s => s.Key).Select(s => (s.Key, s.Caption, s.Kind, s.TaskRole, s.WaitMinutes, string.Join("|", s.Effects), string.Join("|", s.LockedMembers))))
             && a.Transitions.OrderBy(t => t.Trigger).SequenceEqual(b.Transitions.OrderBy(t => t.Trigger));
         public int GetHashCode(WorkflowDef d) => d.Name.GetHashCode();
     }

@@ -104,6 +104,21 @@ public class StateLockTests : IClassFixture<TestDb>
         Assert.DoesNotContain(r.Messages, m => m.Contains("lock on 'Amount'"));
     }
 
+    [Fact] public void NewDraft_keeps_locks()
+    {
+        var def = Fixture($"lock-{Guid.NewGuid():N}", "Amount");
+        using var os = db.NewObjectSpace();
+        var published = DefinitionMapper.ToDraft(os, def, typeof(PurchaseRequest).FullName!);
+        os.CommitChanges();
+        var service = new DefinitionService(new DefinitionStore());
+        Assert.True(service.Publish(os, published, "tester", WorkflowRoleCatalog.Names(os)).Ok);
+
+        var draft = service.NewDraft(os, def.Name);
+        os.CommitChanges();
+        Assert.Equal("Amount", draft.States.Single(s => s.Key == "approval").LockedMembers);
+        Assert.Equal(["Amount"], DefinitionMapper.ToDef(draft).State("approval").LockedMembers);
+    }
+
     [Fact] public void Locked_member_edit_is_refused_on_save()
     {
         var id = Started(true, "Amount");
@@ -162,6 +177,61 @@ public class StateLockTests : IClassFixture<TestDb>
         }
         using (var check = db.NewObjectSpace()) Assert.NotNull(check.GetObjectByKey<WorkflowInstance>(instanceId));
         Assert.Equal("approval", Saved(id).Workflow!.StateKey);
+    }
+
+    static void AssertInFlight(Exception? ex) =>
+        Assert.Equal("'Chair' cannot be deleted while its workflow is in 'Approval'", Assert.IsType<UserFriendlyException>(ex).Message);
+
+    [Fact] public void Subject_hard_delete_is_refused_mid_workflow()
+    {
+        var id = Started(true);
+        using (var ctx = db.NewDbContext())
+        {
+            ctx.Remove(ctx.PurchaseRequests.Single(x => x.ID == id));
+            AssertInFlight(Record.Exception(() => ctx.SaveChanges()));
+        }
+        Assert.NotNull(Saved(id));
+    }
+
+    [Fact] public void Subject_soft_delete_is_refused_mid_workflow()
+    {
+        var id = Started(true);
+        using (var os = db.NewObjectSpace())
+        {
+            os.Delete(os.GetObjectByKey<PurchaseRequest>(id));
+            AssertInFlight(Record.Exception(() => os.CommitChanges()));
+        }
+        Assert.NotNull(Saved(id));
+    }
+
+    [Fact] public void Subject_delete_is_allowed_in_final_state()
+    {
+        var id = Started(true);
+        Ok(rt.Decide(Alice(), OpenTask(id), "Reject"));
+        using (var os = db.NewObjectSpace())
+        {
+            os.Delete(os.GetObjectByKey<PurchaseRequest>(id));
+            os.CommitChanges();
+        }
+        Assert.Null(Saved(id));
+    }
+
+    [Fact] public void Subject_delete_is_allowed_without_workflow()
+    {
+        Guid id;
+        using (var os = db.NewObjectSpace())
+        {
+            var pr = os.CreateObject<PurchaseRequest>();
+            pr.Title = "Lamp";
+            os.CommitChanges();
+            id = pr.ID;
+        }
+        using (var os = db.NewObjectSpace())
+        {
+            os.Delete(os.GetObjectByKey<PurchaseRequest>(id));
+            os.CommitChanges();
+        }
+        Assert.Null(Saved(id));
     }
 
     [Fact] public void Unlocked_member_edit_is_allowed()

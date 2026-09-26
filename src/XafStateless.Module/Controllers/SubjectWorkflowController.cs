@@ -1,5 +1,6 @@
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.Actions;
+using DevExpress.ExpressApp.Security;
 using DevExpress.Persistent.Base;
 using Microsoft.Extensions.DependencyInjection;
 using XafStateless.Module.BusinessObjects;
@@ -53,8 +54,8 @@ public sealed class SubjectWorkflowController : ViewController<DetailView>
         Frame.GetController<StateLockAppearanceController>()?.Reapply();   // the state may have changed: its locks with it
     }
 
-    /// <summary>Start: the Published definitions for this subject type, while no workflow runs. Transition: the manual
-    /// transitions the runtime says this user may fire now.</summary>
+    /// <summary>Start: the Published definitions for this subject type, while no workflow runs and the user may write the
+    /// subject. Transition: the manual transitions the runtime says this user may fire now.</summary>
     void Refill()
     {
         start.Items.Clear();
@@ -66,6 +67,8 @@ public sealed class SubjectWorkflowController : ViewController<DetailView>
         }
         (start.Active["Subject"], transition.Active["Subject"]) = (true, true);
         start.Active["NotStarted"] = subject.Workflow == null;
+        // The runtime refuses Start without Write on the subject; Transition hides itself (Available is empty then).
+        start.Active["Write"] = Application.Security is not IRequestSecurityStrategy security || security.CanWrite(View.ObjectSpace, subject);
         if (subject.Workflow == null)
         {
             var typeName = SubjectType.FullName;

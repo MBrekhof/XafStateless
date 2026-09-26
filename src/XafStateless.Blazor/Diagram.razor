@@ -41,6 +41,10 @@
             {
                 if (!scriptsMissing) { scriptsMissing = true; StateHasChanged(); }
             }
+            catch (Exception ex) when (ex is JSDisconnectedException or TaskCanceledException)
+            {
+                // circuit teardown: nothing to render into any more
+            }
         }
     }
 }

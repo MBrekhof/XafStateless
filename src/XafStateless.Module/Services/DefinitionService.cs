@@ -28,7 +28,7 @@ public sealed class DefinitionService(DefinitionStore store)
         foreach (var s in src.States)
         {
             var state = os.CreateObject<WorkflowState>();
-            (state.Key, state.Caption, state.Kind, state.TaskRole, state.WaitMinutes) = (s.Key, s.Caption, s.Kind, s.TaskRole, s.WaitMinutes);
+            (state.Key, state.Caption, state.Kind, state.TaskRole, state.WaitMinutes, state.LockedMembers) = (s.Key, s.Caption, s.Kind, s.TaskRole, s.WaitMinutes, s.LockedMembers);
             foreach (var e in s.Effects)
             {
                 var effect = os.CreateObject<WorkflowEffect>();
