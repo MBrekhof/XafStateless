@@ -6,7 +6,7 @@ Branch `poc/xafstateless` (pushed; not merged to `master`). Plan: `docs/superpow
 
 - Tasks 1–9 of the plan are implemented, task-reviewed and fixed (cards XSM-001…XSM-009, XSM-011, XSM-012).
 - A final whole-branch review ran; its Critical/Important findings were fixed in `5152782` and re-reviewed clean.
-- Tests: `dotnet test XafStateless.slnx` → Engine 37, Module 82, all green. E2E (`tests/XafStateless.E2E`, needs the demo running on a freshly seeded database — see README) passed 1/1.
+- Tests: `dotnet test XafStateless.slnx` → Engine 37, Module 87, all green. E2E (`tests/XafStateless.E2E`, needs the demo running on a freshly seeded database — see README) passed 1/1.
 - Docs: `README.md` (pitch, comparison with XAF StateMachine, screenshots, how to run), `docs/integrating.md` (host contract + limits), architecture diagram `docs/architecture/xafstateless-architecture.html`.
 
 ## Demo gate — waiting for you
@@ -17,7 +17,7 @@ Run the demo: see README "How to run" (build, then the exe under `demo/XafStatel
 
 ## Needs your action
 
-1. **Codex was unavailable from commit `739823c` onward** (every request returned 401 Unauthorized). An Opus reviewer took its seat, but Codex never saw `739823c..HEAD`. After `codex login`, run a Codex pass over that range.
+1. ~~Codex pass over `739823c..9293a0a`~~ — done 2026-09-26 after `codex login`: 3 StateLockGuard defects (forged soft delete, value converters, cross-type Guid collision) plus type-keyed runtime exemptions, all reproduced by failing tests and fixed in `600c782`, `819c4e2`; Codex confirmed closed.
 2. **History still contains the old project names.** Current files are clean; earlier commits (plan, README, one demo comment) still mention them. Rewriting history was not done (destructive). Decide whether that matters for this private repo.
 3. Two parked doc items (no second fix wave was allowed):
    - `docs/integrating.md` §6: a host that builds its own `WorkflowCaller` over a secured object space must pass the `IRequestSecurityStrategy`, otherwise Start/Fire are refused with the Write message.
