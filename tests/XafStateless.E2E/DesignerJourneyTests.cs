@@ -179,14 +179,17 @@ public class DesignerJourneyTests : PageTest
         await Button(designer, "New").ClickAsync();
         var name = $"e2e-{Guid.NewGuid():N}"[..16];
         await designer.GetByRole(AriaRole.Textbox, new() { Name = "Name*" }).FillAsync(name);
-        await Pick(designer, "Target Type Name*", "XafStateless.Demo.Module.BusinessObjects.PurchaseRequest");
+        await Pick(designer, "Target Type Name*", "Purchase Request");   // the class caption; the full name is stored (XSM-025)
         await Button(designer, "Save").ClickAsync();
         await Expect(Button(designer, "Save")).ToBeDisabledAsync();
         await Refresh(designer);
         await Expect(designer.GetByRole(AriaRole.Combobox, new() { Name = "Target Type Name*", Exact = true }))
-            .ToHaveValueAsync("XafStateless.Demo.Module.BusinessObjects.PurchaseRequest");
+            .ToHaveValueAsync("Purchase Request");
         await Expect(designer.GetByRole(AriaRole.Spinbutton, new() { Name = "Version" })).ToHaveValueAsync("1");   // XSM-018 too
         await Shot(designer, "09-new-definition-target-type");
+        // The list shows the stored value: the full class name, not the caption the editor displays.
+        await Nav(designer, "Workflow", "Workflow Definition");
+        await Expect(Row(designer, name, "XafStateless.Demo.Module.BusinessObjects.PurchaseRequest")).ToHaveCountAsync(1);
     }
 
     // ---- helpers: one per UI gesture ----
@@ -290,9 +293,15 @@ public class DesignerJourneyTests : PageTest
         var choice = p.Locator(".dxbl-dropdown:visible, .dxbl-popup:visible, [role=menu]:visible").GetByText(item, new() { Exact = true }).Last;
         if (action is "Decide" or "Transition")
         {
-            // The menu can re-position right after it opens; a click by coordinates then lands on the neighbouring item
-            // (seen: Approve clicked, Reject executed). Dispatch the click to the item element itself.
-            try { await choice.WaitForAsync(); await choice.DispatchEventAsync("click"); }
+            // XSM-029: clicking a menu item within milliseconds of the menu appearing sometimes executed its neighbour
+            // (Approve clicked, Reject executed; about 1 run in 8). A 300 ms pause avoided the observed misrouting in
+            // repeated runs (32/32 with a pause); the underlying cause remains unconfirmed.
+            try
+            {
+                await choice.WaitForAsync();
+                await p.WaitForTimeoutAsync(300);
+                await choice.ClickAsync();
+            }
             catch (TimeoutException) { await Shot(p, $"zz-choose-{action}-{item}-failed"); throw; }
             return;
         }

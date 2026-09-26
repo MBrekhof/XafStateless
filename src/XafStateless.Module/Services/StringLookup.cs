@@ -11,6 +11,10 @@ public interface IStringLookupSource
     /// (<see cref="StringLookup.RoleNames"/>), so the entity never queries roles through the user's secured space.
     /// Called only when a member lists roles.</param>
     IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames);
+
+    /// <summary>The text shown for <paramref name="value"/> in the list and the field; the value itself unless a member
+    /// stores something that reads badly (XSM-025: a full class name shows as its caption).</summary>
+    string LookupText(string memberName, string value) => value;
 }
 
 public static class StringLookup

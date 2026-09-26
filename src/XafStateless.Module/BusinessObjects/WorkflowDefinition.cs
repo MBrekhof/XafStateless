@@ -4,6 +4,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.DC;
 using DevExpress.ExpressApp.Model;
+using DevExpress.ExpressApp.Utils;
 using DevExpress.Persistent.Base;
 using DevExpress.Persistent.BaseImpl.EF;
 using DevExpress.Persistent.Validation;
@@ -50,6 +51,32 @@ public class WorkflowDefinition : BaseObject, IStringLookupSource
         nameof(TargetTypeName) => SubjectTypeNames(),
         _ => [],
     };
+
+    public string LookupText(string memberName, string value) => memberName == nameof(TargetTypeName) ? SubjectCaption(value) : value;
+
+    /// <summary>The class caption of a subject type (XSM-025). When another subject type has the same caption, the
+    /// caption plus namespace; when that still collides, the full name, so the list never shows two identical entries.
+    /// A name that is not a current subject type shows as stored.</summary>
+    public static string SubjectCaption(string fullName) => SubjectCaption(fullName, SubjectTypeNames().ToList(), Caption);
+
+    internal static string SubjectCaption(string fullName, IReadOnlyList<string> subjects, Func<string, string> Caption)
+    {
+        if (!subjects.Contains(fullName)) return fullName;
+        var others = subjects.Where(n => n != fullName).ToList();
+        var caption = Caption(fullName);
+        if (!others.Any(n => Caption(n) == caption)) return caption;
+        string WithNamespace(string n) => $"{Caption(n)} ({n[..Math.Max(0, n.LastIndexOf('.'))]})";
+        var qualified = WithNamespace(fullName);
+        return others.Any(n => WithNamespace(n) == qualified) ? fullName : qualified;
+    }
+
+    /// <summary>The model's class caption; without an application model (tests) XAF returns the full name, so fall back to
+    /// the same compound-name split XAF uses for default captions.</summary>
+    static string Caption(string fullName)
+    {
+        var caption = CaptionHelper.GetClassCaption(fullName);
+        return caption == fullName ? CaptionHelper.ConvertCompoundName(fullName[(fullName.LastIndexOf('.') + 1)..]) : caption;
+    }
 
     /// <summary>Every persistent, non-abstract class implementing <see cref="IWorkflowSubject"/>: the interface is the marker.</summary>
     public static IEnumerable<string> SubjectTypeNames() => XafTypesInfo.Instance.PersistentTypes

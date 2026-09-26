@@ -211,6 +211,26 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         Assert.All(names, n => Assert.True(typeof(IWorkflowSubject).IsAssignableFrom(XafTypesInfo.Instance.FindTypeInfo(n).Type)));
     }
 
+    [Fact] public void Target_type_shows_as_its_caption_and_unknown_names_as_stored()   // XSM-025
+    {
+        using var _ = db.NewObjectSpace();
+        var d = new WorkflowDefinition();
+        Assert.Equal("Purchase Request", d.LookupText(nameof(WorkflowDefinition.TargetTypeName), typeof(PurchaseRequest).FullName!));
+        Assert.Equal("No.Such.Type", d.LookupText(nameof(WorkflowDefinition.TargetTypeName), "No.Such.Type"));
+        Assert.Equal("draft", d.LookupText(nameof(WorkflowDefinition.InitialStateKey), "draft"));
+    }
+
+    [Fact] public void Target_type_captions_never_collide()   // XSM-025
+    {
+        string[] subjects = ["A.Models.Request", "B.Models.Request", "C.Models.Order", "C.Models.Orders.Order"];
+        static string Caption(string n) => n[(n.LastIndexOf('.') + 1)..];
+        var shown = subjects.Select(s => WorkflowDefinition.SubjectCaption(s, subjects, Caption)).ToList();
+        Assert.Equal(["Request (A.Models)", "Request (B.Models)", "Order (C.Models)", "Order (C.Models.Orders)"], shown);
+        string[] same = ["X.Request", "X.Request2"];   // same namespace, same caption: full names
+        Assert.Equal(same, same.Select(s => WorkflowDefinition.SubjectCaption(s, same, _ => "Request")));
+        Assert.Equal("X.NotASubject", WorkflowDefinition.SubjectCaption("X.NotASubject", same, Caption));
+    }
+
     [Fact] public void Failed_New_renamed_and_retried_is_renumbered()   // XSM-018 (Codex): a refused save must not pin the number
     {
         var (taken, fresh) = (Unique(), Unique());
