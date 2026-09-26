@@ -297,9 +297,10 @@ and run **Start workflow**. `tests/XafStateless.E2E` walks this whole path again
 - **Single app instance** for the notification dispatcher. It takes no lease, so two nodes would both send the same
   notifications. The timer is safe on several nodes: each timer command Touches the instance, so the second node finds the
   timer no longer due, or loses the race and skips it.
-- **Lock value comparisons are conservative.** The lock guard compares a locked member's value with its raw database
-  column. For a value-converted member, or an enum not stored as int, the two may differ even when unchanged: the save is
-  then refused, never allowed.
+- **Lock value comparisons happen in column form.** The lock guard converts a locked member's value with the member's
+  mapped EF converter (value converters and enums alike) and compares it with the raw database column using the provider
+  value comparer, so converted members are compared correctly. Where the ADO reader returns a different CLR type than the
+  converter's provider type, the two compare unequal: the save is then refused, never allowed.
 - **`PermissionPolicyRole` roles and `IPermissionPolicyUser` users.** Role names come from `PermissionPolicyRole`, and
   the current user's roles from `IPermissionPolicyUser.Roles`.
 - **Criteria members are top-level.** A transition's criteria and the lock and effect members use the subject's own

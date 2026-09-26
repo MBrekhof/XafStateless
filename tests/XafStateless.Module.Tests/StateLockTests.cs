@@ -204,6 +204,79 @@ public class StateLockTests : IClassFixture<TestDb>
         Assert.NotNull(Saved(id));
     }
 
+    [Fact] public void Forged_original_gcrecord_cannot_soft_delete_mid_workflow()
+    {
+        // Original == current == nonzero: judged against the persisted (live) row, this is still a soft delete.
+        var id = Started(true);
+        using (var ctx = db.NewDbContext())
+        {
+            var gc = ctx.Entry(ctx.PurchaseRequests.Single(x => x.ID == id)).Property(x => x.GCRecord);
+            (gc.CurrentValue, gc.OriginalValue, gc.IsModified) = (7, 7, true);
+            AssertInFlight(Record.Exception(() => ctx.SaveChanges()));
+        }
+        using (var ctx = db.NewDbContext())
+            Assert.Equal(0, ctx.PurchaseRequests.IgnoreQueryFilters().Single(x => x.ID == id).GCRecord);
+    }
+
+    /// <summary>A <see cref="ConvertedSubject"/> linked to an in-flight request's instance (approval locks Ordered). The link is
+    /// runtime-owned, so it is set inside a runtime scope; the guard only reads link -> instance -> state.</summary>
+    Guid ConvertedInApproval()
+    {
+        var instanceId = Saved(Started(true, "Ordered")).Workflow!.ID;
+        using var ctx = db.NewSubjectsContext();
+        using var scope = RuntimeScope.Open(ctx);
+        var s = ctx.CreateProxy<ConvertedSubject>();
+        (s.Name, s.Workflow) = ("Gadget", ctx.WorkflowInstances.Single(i => i.ID == instanceId));
+        ctx.ConvertedSubjects.Add(s);
+        ctx.SaveChanges();
+        return s.ID;
+    }
+
+    [Fact] public void Converted_locked_member_change_is_refused()
+    {
+        var id = ConvertedInApproval();
+        using (var ctx = db.NewSubjectsContext())
+        {
+            ctx.ConvertedSubjects.Single(x => x.ID == id).Ordered = true;   // stored inverted: the column goes 1 -> 0
+            Assert.Equal("'Ordered' is locked in state 'Approval'", Assert.IsType<UserFriendlyException>(Record.Exception(() => ctx.SaveChanges())).Message);
+        }
+        using (var ctx = db.NewSubjectsContext()) Assert.False(ctx.ConvertedSubjects.Single(x => x.ID == id).Ordered);
+    }
+
+    [Fact] public void Converted_locked_member_unchanged_is_allowed()
+    {
+        var id = ConvertedInApproval();
+        using (var ctx = db.NewSubjectsContext())
+        {
+            var s = ctx.ConvertedSubjects.Single(x => x.ID == id);
+            ctx.Entry(s).Property(x => x.Ordered).IsModified = true;   // same value, written again
+            s.Name = "Gizmo";
+            ctx.SaveChanges();
+        }
+        using (var ctx = db.NewSubjectsContext()) Assert.Equal(("Gizmo", false), (ctx.ConvertedSubjects.Single(x => x.ID == id).Name, ctx.ConvertedSubjects.Single(x => x.ID == id).Ordered));
+    }
+
+    [Fact] public void Colliding_ids_across_subject_types_do_not_share_links()
+    {
+        // A workflow-free OtherSubject with the in-flight request's ID, both hard-deleted in one save (request tracked first).
+        var id = Started(true);
+        using (var ctx = db.NewSubjectsContext())
+        {
+            var other = ctx.CreateProxy<OtherSubject>();
+            (other.ID, other.Name) = (id, "Twin");
+            ctx.OtherSubjects.Add(other);
+            ctx.SaveChanges();
+        }
+        using (var ctx = db.NewSubjectsContext())
+        {
+            ctx.Remove(ctx.PurchaseRequests.Single(x => x.ID == id));
+            ctx.Remove(ctx.OtherSubjects.Single(x => x.ID == id));
+            AssertInFlight(Record.Exception(() => ctx.SaveChanges()));
+        }
+        Assert.NotNull(Saved(id));
+        using (var ctx = db.NewSubjectsContext()) Assert.NotNull(ctx.OtherSubjects.SingleOrDefault(x => x.ID == id));
+    }
+
     [Fact] public void Subject_delete_is_allowed_in_final_state()
     {
         var id = Started(true);

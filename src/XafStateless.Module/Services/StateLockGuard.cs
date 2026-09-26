@@ -22,7 +22,7 @@ namespace XafStateless.Module.Services;
 /// <item>Outside a runtime scope the Workflow link cannot change, clearing included; it is checked first, so clearing it in
 /// the same save cannot dodge a lock.</item>
 /// <item>Outside a runtime scope a subject whose persisted instance is in a non-Final state cannot be deleted, hard
-/// (EntityState.Deleted) or soft (GCRecord going from unset to set): that would orphan its instance and tasks, and a Wait
+/// (EntityState.Deleted) or soft (GCRecord set on a row that is live in the database): that would orphan its instance and tasks, and a Wait
 /// state's timer would fail on every tick. Subjects in a Final state, or without a workflow, delete normally.</item>
 /// </list>
 /// A user save racing a transition collides on the subject's lock version (every command Touches the subject); a merged
@@ -51,11 +51,12 @@ public sealed class StateLockGuard : SaveChangesInterceptor
     const string Link = nameof(IWorkflowSubject.Workflow);
     const string GCRecord = EFCoreDeferredDeletionInterceptor.GCRecordFieldName;
 
-    /// <summary>EF Deleted, or XAF deferred deletion's Modified with GCRecord going from unset to set.</summary>
-    static bool IsDelete(EntityEntry e) =>
+    /// <summary>EF Deleted, or XAF deferred deletion's Modified with a nonzero GCRecord on a row that is live in the database.
+    /// <paramref name="live"/> holds the rows RawSql read (it skips GCRecord != 0); never OriginalValue, which calling code can forge.</summary>
+    static bool IsDelete(EntityEntry e, Dictionary<(Type, Guid), Guid?> live) =>
         e.State == EntityState.Deleted
         || (e.State == EntityState.Modified && e.Metadata.FindProperty(GCRecord) != null
-            && e.Property(GCRecord) is { CurrentValue: int now, OriginalValue: null or 0 } && now != 0);
+            && e.Property(GCRecord).CurrentValue is int now && now != 0 && live.ContainsKey(Key(e)));
 
     static void Check(DbContext? ctx)
     {
@@ -66,30 +67,29 @@ public sealed class StateLockGuard : SaveChangesInterceptor
         if (subjects.Count == 0) return;
         var scope = RuntimeScope.Allows(ctx) ? RuntimeScope.Current : null;
 
-        // The persisted link of every existing subject: one query per subject type.
-        var persistedLink = new Dictionary<Guid, Guid?>();
+        // The persisted link of every existing subject, keyed by (type, ID): subject types in different tables may share IDs.
+        var persistedLink = new Dictionary<(Type, Guid), Guid?>();
         foreach (var group in subjects.Where(e => e.State != EntityState.Added).GroupBy(e => e.Metadata))
             foreach (var row in RawSql.Rows(ctx, group.Key.ClrType, Id, group.Select(e => ((IWorkflowSubject)e.Entity).ID), Id, ForeignKey(group.Key)))
-                persistedLink[(Guid)row[0]!] = (Guid?)row[1];
+                persistedLink[(group.Key.ClrType, (Guid)row[0]!)] = (Guid?)row[1];
 
         var defFk = RawSql.ForeignKey<WorkflowInstance>(ctx, nameof(WorkflowInstance.Definition));
         var stateFk = RawSql.ForeignKey<WorkflowState>(ctx, nameof(WorkflowState.Definition));
-        if (scope == null) CheckDeletes(ctx, subjects.Where(IsDelete).ToList(), persistedLink, defFk, stateFk);
+        if (scope == null) CheckDeletes(ctx, subjects.Where(e => IsDelete(e, persistedLink)).ToList(), persistedLink, defFk, stateFk);
         subjects.RemoveAll(e => e.State == EntityState.Deleted);
 
         foreach (var e in subjects)
         {
-            var subject = (IWorkflowSubject)e.Entity;
             var link = (e.Reference(Link).CurrentValue as BaseObject)?.ID ?? (Guid?)e.Property(ForeignKey(e.Metadata)).CurrentValue;
-            var stored = e.State == EntityState.Added ? null : persistedLink.GetValueOrDefault(subject.ID);
+            var stored = e.State == EntityState.Added ? null : persistedLink.GetValueOrDefault(Key(e));
             if (scope == null && link != stored) throw new UserFriendlyException(LinkManaged);
         }
 
-        var modified = subjects.Where(e => e.State == EntityState.Modified && persistedLink.GetValueOrDefault(((IWorkflowSubject)e.Entity).ID) != null).ToList();
+        var modified = subjects.Where(e => e.State == EntityState.Modified && persistedLink.GetValueOrDefault(Key(e)) != null).ToList();
         if (modified.Count == 0) return;
 
         // Persisted instance state, then that state's locks and caption (definitions are immutable once Published).
-        var instances = RawSql.Rows<WorkflowInstance>(ctx, Id, modified.Select(e => persistedLink[((IWorkflowSubject)e.Entity).ID]!.Value),
+        var instances = RawSql.Rows<WorkflowInstance>(ctx, Id, modified.Select(e => persistedLink[Key(e)]!.Value),
                 Id, defFk, nameof(WorkflowInstance.StateKey))
             .ToDictionary(r => (Guid)r[0]!, r => (Definition: (Guid?)r[1], StateKey: (string)r[2]!));
         var locks = RawSql.Rows<WorkflowState>(ctx, stateFk, instances.Values.Select(i => i.Definition).OfType<Guid>(),
@@ -102,7 +102,7 @@ public sealed class StateLockGuard : SaveChangesInterceptor
         foreach (var e in modified)
         {
             var subject = (IWorkflowSubject)e.Entity;
-            if (!instances.TryGetValue(persistedLink[subject.ID]!.Value, out var instance) || instance.Definition is not { } def
+            if (!instances.TryGetValue(persistedLink[Key(e)]!.Value, out var instance) || instance.Definition is not { } def
                 || !locks.TryGetValue((def, instance.StateKey), out var state))
                 continue;
             foreach (var member in state.Members)
@@ -121,7 +121,7 @@ public sealed class StateLockGuard : SaveChangesInterceptor
             foreach (var (e, member, caption) in group)
             {
                 var row = stored.GetValueOrDefault(((IWorkflowSubject)e.Entity).ID);
-                if (row == null || !Same(e.Property(member).CurrentValue, row[1 + columns.IndexOf(member)]))
+                if (row == null || !Same(e.Property(member), row[1 + columns.IndexOf(member)]))
                     throw new UserFriendlyException($"'{member}' is locked in state '{caption}'");
             }
         }
@@ -129,11 +129,11 @@ public sealed class StateLockGuard : SaveChangesInterceptor
 
     /// <summary>Refuses deleting a subject whose persisted instance is in a non-Final persisted state. No instance or state row
     /// (a write that bypassed EF) means nothing to orphan.</summary>
-    static void CheckDeletes(DbContext ctx, List<EntityEntry> deletes, Dictionary<Guid, Guid?> persistedLink, string defFk, string stateFk)
+    static void CheckDeletes(DbContext ctx, List<EntityEntry> deletes, Dictionary<(Type, Guid), Guid?> persistedLink, string defFk, string stateFk)
     {
-        var linked = deletes.Where(e => persistedLink.GetValueOrDefault(((IWorkflowSubject)e.Entity).ID) != null).ToList();
+        var linked = deletes.Where(e => persistedLink.GetValueOrDefault(Key(e)) != null).ToList();
         if (linked.Count == 0) return;
-        var instances = RawSql.Rows<WorkflowInstance>(ctx, Id, linked.Select(e => persistedLink[((IWorkflowSubject)e.Entity).ID]!.Value),
+        var instances = RawSql.Rows<WorkflowInstance>(ctx, Id, linked.Select(e => persistedLink[Key(e)]!.Value),
                 Id, defFk, nameof(WorkflowInstance.StateKey))
             .ToDictionary(r => (Guid)r[0]!, r => (Definition: (Guid?)r[1], StateKey: (string)r[2]!));
         var states = RawSql.Rows<WorkflowState>(ctx, stateFk, instances.Values.Select(i => i.Definition).OfType<Guid>(),
@@ -141,8 +141,7 @@ public sealed class StateLockGuard : SaveChangesInterceptor
             .ToDictionary(r => ((Guid)r[0]!, (string)r[1]!), r => (Caption: (string)r[2]!, Kind: (StateKind)(int)r[3]!));
         foreach (var e in linked)
         {
-            var subject = (IWorkflowSubject)e.Entity;
-            if (!instances.TryGetValue(persistedLink[subject.ID]!.Value, out var instance) || instance.Definition is not { } def
+            if (!instances.TryGetValue(persistedLink[Key(e)]!.Value, out var instance) || instance.Definition is not { } def
                 || !states.TryGetValue((def, instance.StateKey), out var state) || state.Kind == StateKind.Final)
                 continue;
             var caption = Convert.ToString(XafTypesInfo.Instance.FindTypeInfo(e.Metadata.ClrType)?.DefaultMember?.GetValue(e.Entity), CultureInfo.InvariantCulture);
@@ -150,8 +149,19 @@ public sealed class StateLockGuard : SaveChangesInterceptor
         }
     }
 
-    /// <summary>A tracked value against its raw-read column: enums compare by their stored int.</summary>
-    static bool Same(object? current, object? stored) => Equals(current is Enum ? Convert.ToInt32(current) : current, stored);
+    /// <summary>A tracked value against its raw-read column, both in provider form: the property's mapped converter (value
+    /// converters and enums alike) turns the current value into what EF would write, and the provider comparer compares it.
+    /// A column the reader returns as another CLR type than the provider type compares unequal: refused, never allowed.</summary>
+    static bool Same(PropertyEntry current, object? stored)
+    {
+        var p = current.Metadata;
+        var value = p.GetTypeMapping().Converter is { } c ? c.ConvertToProvider(current.CurrentValue) : current.CurrentValue;
+        if (value == null || stored == null) return value == null && stored == null;
+        return value.GetType() == stored.GetType() && p.GetProviderValueComparer().Equals(value, stored);
+    }
+
+    /// <summary>A subject entry's identity across subject types: its CLR type and ID.</summary>
+    static (Type, Guid) Key(EntityEntry e) => (e.Metadata.ClrType, ((IWorkflowSubject)e.Entity).ID);
 
     static string ForeignKey(Microsoft.EntityFrameworkCore.Metadata.IEntityType type) =>
         type.FindNavigation(Link)?.ForeignKey.Properties[0].Name

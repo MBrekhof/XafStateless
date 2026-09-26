@@ -31,7 +31,7 @@ public sealed class TestDb : IDisposable
             builder.UseConnectionString(ConnectionString);
             builder.AddInterceptors(new EFCoreOptimisticLockInterceptor());
         });
-        using var ctx = NewDbContext();
+        using var ctx = NewSubjectsContext();   // the demo schema plus the test-only subject tables
         ctx.Database.EnsureCreated();
     }
 
@@ -56,6 +56,14 @@ public sealed class TestDb : IDisposable
         var options = new DbContextOptionsBuilder<DemoEFCoreDbContext>();
         options.UseConnectionString(ConnectionString);
         return new DemoEFCoreDbContext(options.Options);
+    }
+
+    /// <summary>A context that also maps <see cref="ConvertedSubject"/> and <see cref="OtherSubject"/>.</summary>
+    public TestSubjectsDbContext NewSubjectsContext()
+    {
+        var options = new DbContextOptionsBuilder<DemoEFCoreDbContext>();
+        options.UseConnectionString(ConnectionString);
+        return new TestSubjectsDbContext(options.Options);
     }
 
     public void Dispose()
