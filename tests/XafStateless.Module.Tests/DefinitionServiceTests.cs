@@ -679,6 +679,59 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         Assert.Contains(store.Get(fresh, d).Transitions, t => t.Trigger == "decline");
     }
 
+    // ---- Fix round 4 (XSM-008: nested "+New" must link the child to its definition) ----
+
+    /// <summary>Mimics XAF Blazor's nested "+New" action for an aggregated collection item: for EF Core,
+    /// IObjectSpace.CreateNestedObjectSpace() returns a plain object space over its own separate DbContext (no
+    /// merge-on-parent-commit; see EFCoreObjectSpace.CreateNestedObjectSpace in the installed source), so the new
+    /// child is created and added through the parent collection resolved in that SAME nested space, which then
+    /// commits on its own - exactly the sequence NewObjectViewController.AddNewObjectToCollectionSource runs when
+    /// objectSpace != currentCollectionSource.ObjectSpace.</summary>
+    [Fact] public void NestedObjectSpace_New_links_transition_to_its_definition()
+    {
+        Guid id;
+        using (var os = db.NewObjectSpace()) { var d = Draft(os, Unique()); os.CommitChanges(); id = d.ID; }
+
+        using (var os = db.NewObjectSpace())
+        {
+            var nested = os.CreateNestedObjectSpace();
+            var definition = nested.GetObjectByKey<WorkflowDefinition>(id);
+            var t = nested.CreateObject<WorkflowTransition>();
+            (t.FromKey, t.Trigger, t.ToKey) = ("draft", "Send back", "review");
+            definition.Transitions.Add(t);
+            nested.CommitChanges();
+        }
+
+        using var check = db.NewObjectSpace();
+        var reloaded = check.GetObjectByKey<WorkflowDefinition>(id);
+        Assert.Contains(reloaded.Transitions, t => t.Trigger == "Send back");
+    }
+
+    /// <summary>Same nested-object-space path for States, and for an Effect nested two levels deep (State, then Effect).</summary>
+    [Fact] public void NestedObjectSpace_New_links_state_and_effect_to_their_owners()
+    {
+        Guid id;
+        using (var os = db.NewObjectSpace()) { var d = Draft(os, Unique()); os.CommitChanges(); id = d.ID; }
+
+        using (var os = db.NewObjectSpace())
+        {
+            var nested = os.CreateNestedObjectSpace();
+            var definition = nested.GetObjectByKey<WorkflowDefinition>(id);
+            var s = nested.CreateObject<WorkflowState>();
+            (s.Key, s.Caption, s.Kind) = ("extra", "Extra", StateKind.Final);
+            definition.States.Add(s);
+            var e = nested.CreateObject<WorkflowEffect>();
+            (e.Kind, e.Target, e.Value) = (EffectKind.SetField, "Ordered", "true");
+            s.Effects.Add(e);
+            nested.CommitChanges();
+        }
+
+        using var check = db.NewObjectSpace();
+        var reloaded = check.GetObjectByKey<WorkflowDefinition>(id);
+        var extra = Assert.Single(reloaded.States, s => s.Key == "extra");
+        Assert.Single(extra.Effects);
+    }
+
     sealed class FakeClock : TimeProvider;
 
     /// <summary>Records hold lists; compare them by content.</summary>
