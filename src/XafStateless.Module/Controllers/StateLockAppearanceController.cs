@@ -11,6 +11,9 @@ namespace XafStateless.Module.Controllers;
 /// Detail views only: a list holds rows in different states, and a rule built from CurrentObject would apply to all of them.
 /// UI only; <see cref="StateLockGuard"/> refuses the save. The rule set depends on the current state, so every
 /// <see cref="Reapply"/> resets the rules cache before refreshing (dxdocs 113374).
+/// A rule exists for every member the pinned definition locks in ANY state, and fails ("1 = 0") where the current state
+/// does not lock it. AppearanceController restores an item only through a present rule whose criteria fail (ResetValue);
+/// an absent rule leaves the item as it was, so a member unlocked by a state change would otherwise stay disabled.
 /// </summary>
 public sealed class StateLockAppearanceController : ViewController<DetailView>
 {
@@ -51,19 +54,24 @@ public sealed class StateLockAppearanceController : ViewController<DetailView>
     {
         // CachedAppearanceRuleProperties: the public IAppearanceRuleProperties whose DeclaringType is settable. AppearanceRule
         // needs it (ValidateByCriteria), and AppearanceAttribute's is always null.
-        foreach (var member in LockedMembers())
+        var (lockable, locked) = Locks();
+        foreach (var member in lockable)
             e.AppearanceRules.Add(new CachedAppearanceRuleProperties(new AppearanceAttribute($"XafStateless.StateLock.{member}")
             {
                 TargetItems = member,
                 AppearanceItemType = "ViewItem",
                 Enabled = false,
                 Context = "DetailView",
+                Criteria = locked.Contains(member) ? null : "1 = 0",   // unlocked: the failing rule resets the editor
             }) { DeclaringType = View.ObjectTypeInfo.Type });
     }
 
-    /// <summary>The locks of the current object's state, from the pinned definition's snapshot.</summary>
-    IReadOnlyList<string> LockedMembers() =>
-        View.CurrentObject is IWorkflowSubject { Workflow: { Definition: { } d } instance } && store != null
-            ? store.Get(View.ObjectSpace, d.ID).States.FirstOrDefault(s => s.Key == instance.StateKey)?.LockedMembers ?? []
-            : [];
+    /// <summary>From the pinned definition's snapshot: every member any state locks, and those the current state locks.</summary>
+    (IReadOnlyList<string> Lockable, IReadOnlyList<string> Locked) Locks()
+    {
+        if (View.CurrentObject is not IWorkflowSubject { Workflow: { Definition: { } d } instance } || store == null) return ([], []);
+        var states = store.Get(View.ObjectSpace, d.ID).States;
+        return (states.SelectMany(s => s.LockedMembers).Distinct().ToList(),
+                states.FirstOrDefault(s => s.Key == instance.StateKey)?.LockedMembers ?? []);
+    }
 }
