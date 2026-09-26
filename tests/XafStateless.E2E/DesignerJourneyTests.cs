@@ -243,10 +243,24 @@ public class DesignerJourneyTests : PageTest
     async Task Pick(IPage p, string combo, string option)
     {
         var box = p.GetByRole(AriaRole.Combobox, new() { Name = combo, Exact = true });
-        await box.ClickAsync();
-        await p.Keyboard.PressAsync("Alt+ArrowDown");
-        var list = await box.GetAttributeAsync("aria-controls");
-        await p.Locator($"[id='{list}']").GetByRole(AriaRole.Option, new() { Name = option, Exact = true }).ClickAsync();
+        // An ImmediatePostData combo re-renders after a pick, so a second pick can grab a dropdown that is being replaced:
+        // on a timeout, close it and retry once with a fresh one.
+        for (var attempt = 1; ; attempt++)
+        {
+            await box.ClickAsync();
+            await p.Keyboard.PressAsync("Alt+ArrowDown");
+            var list = await box.GetAttributeAsync("aria-controls");
+            try
+            {
+                await p.Locator($"[id='{list}']").GetByRole(AriaRole.Option, new() { Name = option, Exact = true })
+                    .ClickAsync(new() { Timeout = attempt == 1 ? 5000 : S.TimeoutMs });
+                break;
+            }
+            catch (TimeoutException) when (attempt == 1)
+            {
+                await p.Keyboard.PressAsync("Escape");
+            }
+        }
         await Expect(box).ToHaveValueAsync(option);
     }
 
@@ -268,10 +282,20 @@ public class DesignerJourneyTests : PageTest
     }
 
     /// <summary>Run a choice action: one item runs on click, several drop down.</summary>
+    /// <summary>Run a choice action. Decide and Transition always open their menu (ShowItemsOnClick): wait for the item,
+    /// never guess. Start workflow runs its only item on click, or drops down when there are several.</summary>
     async Task Choose(IPage p, string action, string item)
     {
         await Button(p, action).ClickAsync();
-        var choice = p.Locator(".dxbl-dropdown, .dxbl-popup, [role=menu]").GetByText(item, new() { Exact = true }).Last;
+        var choice = p.Locator(".dxbl-dropdown:visible, .dxbl-popup:visible, [role=menu]:visible").GetByText(item, new() { Exact = true }).Last;
+        if (action is "Decide" or "Transition")
+        {
+            // The menu can re-position right after it opens; a click by coordinates then lands on the neighbouring item
+            // (seen: Approve clicked, Reject executed). Dispatch the click to the item element itself.
+            try { await choice.WaitForAsync(); await choice.DispatchEventAsync("click"); }
+            catch (TimeoutException) { await Shot(p, $"zz-choose-{action}-{item}-failed"); throw; }
+            return;
+        }
         try { await choice.ClickAsync(new() { Timeout = 3000 }); }
         catch (TimeoutException) { }   // single item: the click already ran it
     }

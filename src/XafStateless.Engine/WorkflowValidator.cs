@@ -8,74 +8,92 @@ public interface IWorkflowEnvironment
     string? CheckMember(string member);          // null = ok (a member effects and locks may use)
 }
 
+/// <summary>One validation finding. <see cref="State"/> names the state it is about (null: the definition as a whole, or
+/// several states), so a designer UI can mark that state.</summary>
+public sealed record Finding(string Message, string? State = null);
+
 public static class WorkflowValidator
 {
-    public static IReadOnlyList<string> Validate(WorkflowDef def, IWorkflowEnvironment env)
+    /// <summary>The findings' messages; empty when the definition is valid.</summary>
+    public static IReadOnlyList<string> Validate(WorkflowDef def, IWorkflowEnvironment env) =>
+        Check(def, env).Select(f => f.Message).ToArray();
+
+    /// <summary>Every finding, each tagged with its state where it has one. The finishing rules report a cause once (XSM-024):
+    /// no Final state at all is one definition-level finding; a dead end is reported on itself, and the states whose paths
+    /// only lead into it are not blamed; "can never finish" is left for genuine loops without an exit.</summary>
+    public static IReadOnlyList<Finding> Check(WorkflowDef def, IWorkflowEnvironment env)
     {
-        var errs = new List<string>();
+        var errs = new List<Finding>();
         var keys = new HashSet<string>();
-        foreach (var s in def.States) if (!keys.Add(s.Key)) errs.Add($"duplicate state '{s.Key}'");
-        if (!keys.Contains(def.InitialState)) errs.Add($"initial state '{def.InitialState}' does not exist");
+        foreach (var s in def.States) if (!keys.Add(s.Key)) errs.Add(new($"duplicate state '{s.Key}'", s.Key));
+        if (!keys.Contains(def.InitialState)) errs.Add(new($"initial state '{def.InitialState}' does not exist"));
         foreach (var t in def.Transitions)
             foreach (var k in new[] { t.From, t.To }.Where(k => !keys.Contains(k)))
-                errs.Add($"transition '{t.Trigger}' refers to unknown state '{k}'");
+                errs.Add(new($"transition '{t.Trigger}' refers to unknown state '{k}'", keys.Contains(t.From) ? t.From : null));
         foreach (var g in def.Transitions.GroupBy(t => (t.From, t.Trigger)).Where(g => g.Count() > 1))
-            errs.Add($"duplicate trigger '{g.Key.Trigger}' from '{g.Key.From}'");
+            errs.Add(new($"duplicate trigger '{g.Key.Trigger}' from '{g.Key.From}'", keys.Contains(g.Key.From) ? g.Key.From : null));
         if (errs.Count > 0) return errs;   // graph rules below assume a well-formed graph
 
         var reach = Bfs([def.InitialState], k => def.From(k).Select(t => t.To));
-        var finishers = Bfs(def.States.Where(s => s.Kind == StateKind.Final).Select(s => s.Key),
-                             k => def.Transitions.Where(t => t.To == k).Select(t => t.From));
+        IEnumerable<string> Into(string k) => def.Transitions.Where(t => t.To == k).Select(t => t.From);
+        var finals = def.States.Where(s => s.Kind == StateKind.Final).Select(s => s.Key).ToList();
+        var deadEnds = def.States.Where(s => s.Kind != StateKind.Final && !def.From(s.Key).Any()).Select(s => s.Key).ToList();
+        var finishers = Bfs(finals, Into);
+        var intoDeadEnd = Bfs(deadEnds, Into);   // a state that can reach a dead end: the dead end is the cause
+        if (finals.Count == 0) errs.Add(new("no state is Final, so the workflow can never end: set the Kind of the state where it ends to Final"));
         foreach (var s in def.States)
         {
             var outs = def.From(s.Key).ToList();
-            if (!reach.Contains(s.Key)) errs.Add($"'{s.Key}' is unreachable");
-            if (s.Kind == StateKind.Final) { if (outs.Count > 0) errs.Add($"final state '{s.Key}' has transitions"); }
-            else if (outs.Count == 0) errs.Add($"'{s.Key}' has no way out");
-            else if (!finishers.Contains(s.Key)) errs.Add($"'{s.Key}' can never finish");
+            void Add(string message) => errs.Add(new(message, s.Key));
+            if (!reach.Contains(s.Key)) Add($"'{s.Key}' is unreachable");
+            if (s.Kind == StateKind.Final) { if (outs.Count > 0) Add($"final state '{s.Key}' has transitions"); }
+            else if (outs.Count == 0) Add($"'{s.Key}' has no way out: make it Final, or add a transition from it");
+            else if (finals.Count > 0 && !finishers.Contains(s.Key) && !intoDeadEnd.Contains(s.Key))
+                Add($"'{s.Key}' can never finish: its paths loop without reaching a Final state");
             if (s.Kind is StateKind.Decision or StateKind.Wait && outs.Any(t => t.To == s.Key))
-                errs.Add($"'{s.Key}' cannot transition to itself");
+                Add($"'{s.Key}' cannot transition to itself");
             switch (s.Kind)
             {
                 case StateKind.Wait:
                     if (outs.Count != 1 || outs[0].Criteria != null || outs[0].RequiredRole != null)
-                        errs.Add($"wait '{s.Key}' needs exactly one unguarded exit");
-                    if (s.WaitMinutes is not > 0) errs.Add($"wait '{s.Key}' needs a duration");
+                        Add($"wait '{s.Key}' needs exactly one unguarded exit");
+                    if (s.WaitMinutes is not > 0) Add($"wait '{s.Key}' needs a duration");
                     break;
                 case StateKind.Task:
-                    if (string.IsNullOrWhiteSpace(s.TaskRole)) errs.Add($"task '{s.Key}' needs a role");
-                    else if (!env.RoleExists(s.TaskRole)) errs.Add($"role '{s.TaskRole}' does not exist");
+                    if (string.IsNullOrWhiteSpace(s.TaskRole)) Add($"task '{s.Key}' needs a role");
+                    else if (!env.RoleExists(s.TaskRole)) Add($"role '{s.TaskRole}' does not exist");
                     foreach (var t in outs.Where(t => t.RequiredRole != null))
-                        errs.Add($"task '{s.Key}' outcome '{t.Trigger}' cannot require a role");
+                        Add($"task '{s.Key}' outcome '{t.Trigger}' cannot require a role");
                     break;
                 case StateKind.Decision when outs.Count > 0:
                     foreach (var g in outs.GroupBy(t => t.Order).Where(g => g.Count() > 1))
-                        errs.Add($"decision '{s.Key}' has duplicate order {g.Key}");
+                        Add($"decision '{s.Key}' has duplicate order {g.Key}");
                     foreach (var t in outs.Where(t => t.RequiredRole != null))
-                        errs.Add($"decision '{s.Key}' branch '{t.Trigger}' cannot require a role");
-                    if (outs[^1].Criteria != null) errs.Add($"decision '{s.Key}' needs a final else-branch without criteria");
+                        Add($"decision '{s.Key}' branch '{t.Trigger}' cannot require a role");
+                    if (outs[^1].Criteria != null) Add($"decision '{s.Key}' needs a final else-branch without criteria");
                     foreach (var t in outs.Take(outs.Count - 1).Where(t => t.Criteria == null))
-                        errs.Add($"decision '{s.Key}' branch '{t.Trigger}' needs criteria");
+                        Add($"decision '{s.Key}' branch '{t.Trigger}' needs criteria");
                     break;
             }
             foreach (var e in s.Effects)
             {
                 if (e.Kind == EffectKind.Notify && e.Target == EffectDef.Requester)
                 {
-                    if (env.RoleExists(EffectDef.Requester)) errs.Add($"a role named '{EffectDef.Requester}' conflicts with the requester recipient");
+                    if (env.RoleExists(EffectDef.Requester)) Add($"a role named '{EffectDef.Requester}' conflicts with the requester recipient");
                 }
-                else if (e.Kind == EffectKind.Notify && !env.RoleExists(e.Target)) errs.Add($"role '{e.Target}' does not exist");
-                if (env.CheckEffect(e) is { } err) errs.Add($"effect on '{s.Key}': {err}");
+                else if (e.Kind == EffectKind.Notify && !env.RoleExists(e.Target)) Add($"role '{e.Target}' does not exist");
+                if (env.CheckEffect(e) is { } err) Add($"effect on '{s.Key}': {err}");
             }
             foreach (var m in s.LockedMembers)
-                if (env.CheckMember(m) is { } err) errs.Add($"lock on '{m}': {err}");
+                if (env.CheckMember(m) is { } err) Add($"lock on '{m}': {err}");
         }
         foreach (var t in def.Transitions)
         {
-            if (t.RequiredRole != null && !env.RoleExists(t.RequiredRole)) errs.Add($"role '{t.RequiredRole}' does not exist");
-            if (t.Criteria != null && env.CheckCriteria(t.Criteria) is { } err) errs.Add($"criteria on '{t.Trigger}': {err}");
+            if (t.RequiredRole != null && !env.RoleExists(t.RequiredRole)) errs.Add(new($"role '{t.RequiredRole}' does not exist", t.From));
+            if (t.Criteria != null && env.CheckCriteria(t.Criteria) is { } err) errs.Add(new($"criteria on '{t.Trigger}': {err}", t.From));
         }
-        if (DecisionLoop(def) is { } loop) errs.Add($"decisions {string.Join(" → ", loop.Select(k => $"'{k}'"))} form a loop");
+        // Spans several states; one nullable State cannot mark them all, so it stays definition-level.
+        if (DecisionLoop(def) is { } loop) errs.Add(new($"decisions {string.Join(" → ", loop.Select(k => $"'{k}'"))} form a loop"));
         return errs;
     }
 

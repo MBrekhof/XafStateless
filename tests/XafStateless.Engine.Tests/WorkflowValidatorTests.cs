@@ -69,6 +69,100 @@ public class WorkflowValidatorTests
         Assert.Contains(V(d), e => e.Contains("'wait-cooling' has no way out"));
     }
 
+    // XSM-024: the user's case. The cause (no Final state) as one definition-level finding, plus the dead end on the state
+    // that should have been Final; no "can never finish" on the states before it.
+    static readonly WorkflowDef NoFinal = new("chain", 1, "Start",
+        [new("Start", "Starting", StateKind.Manual), new("Middle", "In the middle", StateKind.Manual), new("End", "The End", StateKind.Manual)],
+        [new("Start", "Start", "Middle"), new("Middle", "Middle", "End")]);
+
+    [Fact] public void No_final_state_is_reported_as_the_cause_not_as_symptoms()
+    {
+        var findings = WorkflowValidator.Check(NoFinal, Env);
+        Assert.Contains(findings, f => f.State == null && f.Message.StartsWith("no state is Final"));
+        Assert.Contains(findings, f => f.State == "End" && f.Message == "'End' has no way out: make it Final, or add a transition from it");
+        Assert.DoesNotContain(findings, f => f.Message.Contains("can never finish"));
+        Assert.Equal(2, findings.Count);
+    }
+
+    [Fact] public void States_leading_only_to_a_dead_end_are_not_blamed()
+    {
+        // draft -Park-> a -Go-> b (a dead end); the rest of the fixture still finishes.
+        var d = Pr with
+        {
+            States = [.. Pr.States, new StateDef("a", "A", StateKind.Manual), new StateDef("b", "B", StateKind.Manual)],
+            Transitions = [.. Pr.Transitions, new TransitionDef("draft", "Park", "a"), new TransitionDef("a", "Go", "b")]
+        };
+        var findings = WorkflowValidator.Check(d, Env);
+        Assert.Contains(findings, f => f.State == "b" && f.Message.StartsWith("'b' has no way out"));
+        Assert.DoesNotContain(findings, f => f.Message.Contains("'a' can never finish"));
+    }
+
+    static WorkflowDef Plus(IEnumerable<StateDef> states, IEnumerable<TransitionDef> transitions) =>
+        Pr with { States = [.. Pr.States, .. states], Transitions = [.. Pr.Transitions, .. transitions] };
+
+    [Fact] public void A_closed_loop_next_to_a_dead_end_blames_only_the_loop_and_the_dead_end()
+    {
+        // draft -Park-> a <-> b (closed loop), draft -Hold-> c (dead end)
+        var d = Plus([new("a", "A", StateKind.Manual), new("b", "B", StateKind.Manual), new("c", "C", StateKind.Manual)],
+            [new("draft", "Park", "a"), new("a", "Go", "b"), new("b", "Back", "a"), new("draft", "Hold", "c")]);
+        var f = WorkflowValidator.Check(d, Env);
+        Assert.Contains(f, x => x.State == "a" && x.Message.StartsWith("'a' can never finish"));
+        Assert.Contains(f, x => x.State == "b" && x.Message.StartsWith("'b' can never finish"));
+        Assert.Contains(f, x => x.State == "c" && x.Message.StartsWith("'c' has no way out"));
+        Assert.DoesNotContain(f, x => x.Message.Contains("'draft' can never finish"));
+    }
+
+    [Fact] public void A_loop_whose_exit_is_a_dead_end_is_not_blamed()
+    {
+        // a <-> b, b -Leave-> c (dead end): the dead end is the cause
+        var d = Plus([new("a", "A", StateKind.Manual), new("b", "B", StateKind.Manual), new("c", "C", StateKind.Manual)],
+            [new("draft", "Park", "a"), new("a", "Go", "b"), new("b", "Back", "a"), new("b", "Leave", "c")]);
+        var f = WorkflowValidator.Check(d, Env);
+        Assert.Single(f, x => x.Message.StartsWith("'c' has no way out"));
+        Assert.DoesNotContain(f, x => x.Message.Contains("can never finish"));
+    }
+
+    [Fact] public void A_wait_leading_into_a_dead_end_keeps_its_own_findings_but_is_not_blamed_for_finishing()
+    {
+        var d = Plus([new("w", "W", StateKind.Wait), new("c", "C", StateKind.Manual)], [new("draft", "Park", "w"), new("w", "Done", "c")]);
+        var f = WorkflowValidator.Check(d, Env);
+        Assert.Contains(f, x => x.State == "w" && x.Message == "wait 'w' needs a duration");
+        Assert.DoesNotContain(f, x => x.Message.Contains("'w' can never finish"));
+    }
+
+    [Fact] public void Role_criteria_effect_and_lock_findings_carry_their_state()
+    {
+        var d = Pr with
+        {
+            States = Pr.States.Select(s => s.Key == "approval"
+                ? s with { TaskRole = "Ghosts", OnEntry = [new(EffectKind.SetField, "Nope", "1")], Locked = ["Nope"] } : s).ToList(),
+            Transitions = Pr.Transitions.Select(t => t.Trigger == "Large" ? t with { Criteria = "Nope > 1" } : t).ToList(),
+        };
+        var f = WorkflowValidator.Check(d, Env);
+        Assert.Contains(f, x => x.State == "approval" && x.Message == "role 'Ghosts' does not exist");
+        Assert.Contains(f, x => x.State == "approval" && x.Message.StartsWith("effect on 'approval'"));
+        Assert.Contains(f, x => x.State == "approval" && x.Message.StartsWith("lock on 'Nope'"));
+        Assert.Contains(f, x => x.State == "decide-amount" && x.Message.StartsWith("criteria on 'Large'"));
+    }
+
+    [Fact] public void Without_a_final_state_a_loop_is_not_blamed_either()
+    {
+        var loop = new WorkflowDef("loop", 1, "a", [new("a", "A", StateKind.Manual), new("b", "B", StateKind.Manual)],
+            [new("a", "Go", "b"), new("b", "Back", "a")]);
+        var f = WorkflowValidator.Check(loop, Env);
+        Assert.Equal([null], f.Select(x => x.State));
+        Assert.StartsWith("no state is Final", f[0].Message);
+    }
+
+    [Fact] public void A_duplicate_trigger_from_an_unknown_state_is_not_tagged_with_it()
+    {
+        var d = Pr with { Transitions = [.. Pr.Transitions, new TransitionDef("ghost", "X", "draft"), new TransitionDef("ghost", "X", "draft")] };
+        Assert.Contains(WorkflowValidator.Check(d, Env), f => f.Message == "duplicate trigger 'X' from 'ghost'" && f.State == null);
+    }
+
+    [Fact] public void Validate_returns_the_finding_messages() =>
+        Assert.Equal(WorkflowValidator.Check(NoFinal, Env).Select(f => f.Message), WorkflowValidator.Validate(NoFinal, Env));
+
     [Fact] public void Trap_cycle_can_never_finish()
     {
         var d = Pr with
