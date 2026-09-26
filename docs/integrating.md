@@ -212,6 +212,11 @@ yet, or grant the missing permissions to the existing role yourself (an idempote
   caller's security strategy (`IsGrantedExtensions.CanWrite`) and refuses with "changing the workflow of this
   PurchaseRequest requires write access to it". A caller that cannot read the subject at all is refused as well. Deciding a
   task is authorized by the task's role instead. The timer runs as the system and is not checked.
+- **Code that calls the runtime itself passes the security strategy.** The module's actions build their
+  `WorkflowCaller` with `WorkflowCommand.Caller(app, objectSpace)`, which does this. A host that constructs a
+  `WorkflowCaller` itself over a secured object space (a Web API endpoint, a job acting for a user) must pass the
+  `IRequestSecurityStrategy` that secures it as `Security`; without it, Start and Fire are refused with the same "requires
+  write access" message, because the Write check cannot run. A plain, non-secured object space needs no strategy.
 - **Role membership is read from the logged-on user** (`IPermissionPolicyUser.Roles`) and stays cached until the next
   logon, so a role granted or revoked meanwhile changes what the workflow actions allow only after the user logs on again.
 - **Role names in workflows are role names.** A Task state's role, a transition's required role and a Notify
@@ -332,7 +337,9 @@ and run **Start workflow**. `tests/XafStateless.E2E` walks this whole path again
   `BaseObjectInt` is not supported.
 - **The guards are SaveChanges interceptors.** EF Core `ExecuteUpdate`/`ExecuteDelete`, raw SQL, and anything else that
   skips `SaveChanges` bypasses them, including immutable published definitions, runtime-owned rows and field locks.
-  Keep such writes away from workflow tables and locked subject fields.
+  Keep such writes away from workflow tables and locked subject fields. The same holds for a database-level
+  `ON DELETE CASCADE`: a subject deleted by the database as part of deleting its parent, without being loaded into the
+  context, is not seen by the delete guard.
 - **Single app instance** for the notification dispatcher. It takes no lease, so two nodes would both send the same
   notifications. The timer is safe on several nodes: each timer command Touches the instance, so the second node finds the
   timer no longer due, or loses the race and skips it.

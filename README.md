@@ -70,8 +70,9 @@ Coverage:
   v2 with a new Finance step, is refused at publish until the step has a way out, and shows that a v2 request passes
   Finance while a v1 request started earlier does not.
 
-Next: a trial integration into a real host application, following [docs/integrating.md](docs/integrating.md). There is
-no NuGet package yet. Open work lives on ContextBoard, project **XafStateless**.
+Host trial: the module was added to the BPGDemo skeleton by following [docs/integrating.md](docs/integrating.md), with no
+module change; results and findings are in [docs/host-trial.md](docs/host-trial.md). There is no NuGet package yet. Open
+work lives on ContextBoard, project **XafStateless**.
 
 ## How to run
 
