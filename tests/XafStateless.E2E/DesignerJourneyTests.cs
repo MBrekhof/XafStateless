@@ -1,0 +1,246 @@
+using System.Text.RegularExpressions;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Playwright;
+using Microsoft.Playwright.NUnit;
+
+namespace XafStateless.E2E;
+
+public sealed class E2ESettings
+{
+    public string BaseUrl { get; set; } = "http://localhost:5000";
+    public string Designer { get; set; } = "designer";
+    public string Approver { get; set; } = "approver";
+    public string Password { get; set; } = "";
+    public float TimeoutMs { get; set; } = 20000;
+    public string ScreenshotDir { get; set; } = "screenshots";
+
+    public static readonly E2ESettings Instance = Load();
+
+    static E2ESettings Load()
+    {
+        var s = new E2ESettings();
+        new ConfigurationBuilder().SetBasePath(AppContext.BaseDirectory).AddJsonFile("appsettings.e2e.json").Build().Bind(s);
+        return s;
+    }
+}
+
+/// <summary>The designer journey against the running demo (see README "How to run"). Needs a freshly seeded database:
+/// it creates v2 of purchase-request, which only works while v1 is the latest version.
+/// Navigation is by clicks after the one login page load per user; hard navigations race XAF's circuit.</summary>
+public class DesignerJourneyTests : PageTest
+{
+    static E2ESettings S => E2ESettings.Instance;
+    static readonly string V1Request = "Desk (v1)", V2Request = "Chair (v2)";
+
+    public override BrowserNewContextOptions ContextOptions() => new() { ViewportSize = new() { Width = 1440, Height = 900 } };
+
+    [Test]
+    public async Task Designer_adds_a_finance_step_and_each_request_follows_its_own_version()
+    {
+        SetDefaultExpectTimeout(S.TimeoutMs);
+
+        // 0. Before v2 exists, the approver starts a request on v1.
+        var approver = await LogIn(await (await Browser.NewContextAsync(ContextOptions())).NewPageAsync(), S.Approver);
+        await NewRequest(approver, V1Request, 50);
+        await Choose(approver, "Start workflow", "purchase-request");
+        await Choose(approver, "Transition", "Submit");
+        await Expect(WorkflowLink(approver, "Approval")).ToBeVisibleAsync();
+        await Shot(approver, "00-v1-request-submitted");
+
+        // 1. The designer runs New version on purchase-request: v2.
+        var designer = await LogIn(Page, S.Designer);
+        await Nav(designer, "Workflow", "Workflow Definition");
+        await Row(designer, "purchase-request", "Published").GetByRole(AriaRole.Gridcell, new() { Name = "purchase-request", Exact = true }).ClickAsync();
+        await Expect(designer.GetByRole(AriaRole.Button, new() { Name = "New version", Exact = true })).ToBeEnabledAsync();
+        await Button(designer, "New version").ClickAsync();
+        await Expect(designer.GetByRole(AriaRole.Spinbutton, new() { Name = "Version" })).ToHaveValueAsync("2");
+        await Shot(designer, "01-new-version-v2");
+
+        // 2. Add the Task state 'finance' for Approvers, and re-route approval --Approve--> finance.
+        await designer.GetByRole(AriaRole.Tab, new() { Name = "States", Exact = true }).ClickAsync();
+        await designer.GetByRole(AriaRole.Tabpanel, new() { Name = "States" }).GetByRole(AriaRole.Button, new() { Name = "New", Exact = true }).ClickAsync();
+        await designer.GetByRole(AriaRole.Textbox, new() { Name = "Key*" }).FillAsync("finance");
+        await designer.GetByRole(AriaRole.Textbox, new() { Name = "Caption*" }).FillAsync("Finance");
+        await Pick(designer, "Kind", "Task");
+        await Pick(designer, "Task Role", "Approvers");
+        await Shot(designer, "02a-state-finance");
+        await SaveAndCloseTab(designer);
+
+        await designer.GetByRole(AriaRole.Tab, new() { Name = "Transitions", Exact = true }).ClickAsync();
+        await Row(designer, "approval", "Approve").GetByRole(AriaRole.Gridcell, new() { Name = "Approve", Exact = true }).ClickAsync();
+        await Pick(designer, "To Key*", "finance");
+        await SaveAndCloseTab(designer);
+        await Refresh(designer);
+        await Expect(Row(designer, "approval", "Approve").GetByRole(AriaRole.Gridcell, new() { Name = "finance", Exact = true })).ToBeVisibleAsync();
+        await Shot(designer, "02b-approve-rerouted-to-finance");
+
+        // 3. Publish is refused while finance has no way out; with the edge added it succeeds.
+        await Button(designer, "Publish").ClickAsync();
+        await Expect(Alert(designer, "'finance' has no way out")).ToBeVisibleAsync();
+        await Shot(designer, "03a-publish-refused");
+
+        await designer.GetByRole(AriaRole.Tab, new() { Name = "Transitions", Exact = true }).ClickAsync();
+        await designer.GetByRole(AriaRole.Tabpanel, new() { Name = "Transitions" }).GetByRole(AriaRole.Button, new() { Name = "New", Exact = true }).ClickAsync();
+        await Pick(designer, "From Key*", "finance");
+        await designer.GetByRole(AriaRole.Textbox, new() { Name = "Trigger*" }).FillAsync("Approve");
+        await Pick(designer, "To Key*", "decide-amount");
+        await SaveAndCloseTab(designer);
+        await Refresh(designer);
+        await Button(designer, "Publish").ClickAsync();
+        await Expect(Alert(designer, "'purchase-request' v2 published.")).ToBeVisibleAsync();
+        await Expect(designer.GetByRole(AriaRole.Combobox, new() { Name = "State", Exact = true })).ToHaveValueAsync("Published");
+        await Shot(designer, "03b-published-v2");
+
+        // 4. The diagram, drawn from the same definition, shows finance.
+        await Refresh(designer);
+        var diagram = designer.Locator(".xafstateless-diagram-root:visible");
+        await Expect(diagram.Locator("svg").First).ToContainTextAsync("Finance");
+        await Expect(designer.GetByRole(AriaRole.Alert)).ToHaveCountAsync(0);   // the publish toast auto-closes; keep it off the picture
+        await designer.SetViewportSizeAsync(1440, 1600);                        // the whole v2 graph, not clipped by the view's scroll area
+        await diagram.ScrollIntoViewIfNeededAsync();
+        await diagram.ScreenshotAsync(new() { Path = ShotPath("04-diagram-with-finance"), Animations = ScreenshotAnimations.Disabled });
+        await designer.SetViewportSizeAsync(1440, 900);
+
+        // 5. The approver creates a request (Amount 50), starts it (now on v2) and submits it.
+        await NewRequest(approver, V2Request, 50);
+        await Choose(approver, "Start workflow", "purchase-request");
+        await Choose(approver, "Transition", "Submit");
+        await Expect(WorkflowLink(approver, "Approval")).ToBeVisibleAsync();
+        await Shot(approver, "05-v2-request-submitted");
+
+        // 6. Approve the approval task, then the finance task: the request is Ordered.
+        await OpenTask(approver, V2Request, "approval");
+        await Decide(approver, "Approve");
+        await OpenTask(approver, V2Request, "finance");
+        await Shot(approver, "06a-finance-task");
+        await Decide(approver, "Approve");
+        await OpenRequest(approver, V2Request);
+        await Expect(WorkflowLink(approver, "Ordered")).ToBeVisibleAsync();
+        await Expect(approver.GetByRole(AriaRole.Checkbox, new() { Name = "Ordered", Exact = true })).ToBeCheckedAsync();
+        await Shot(approver, "06b-v2-request-ordered");
+
+        // 7. The request started on v1 still follows v1: Approve goes straight on to Ordered, no finance task.
+        await OpenTask(approver, V1Request, "approval");
+        await Decide(approver, "Approve");
+        await OpenRequest(approver, V1Request);
+        await Expect(WorkflowLink(approver, "Ordered")).ToBeVisibleAsync();
+        await Expect(approver.GetByRole(AriaRole.Checkbox, new() { Name = "Ordered", Exact = true })).ToBeCheckedAsync();
+        await Shot(approver, "07-v1-request-ordered-without-finance");
+        await Nav(approver, "Workflow", "Workflow Task");
+        await Expect(Row(approver, V1Request, "finance")).ToHaveCountAsync(0);   // the open-tasks list: nothing left for it
+        await Expect(Row(approver, V2Request, "finance")).ToHaveCountAsync(0);
+    }
+
+    // ---- helpers: one per UI gesture ----
+
+    async Task<IPage> LogIn(IPage page, string user)
+    {
+        page.SetDefaultTimeout(S.TimeoutMs);
+        await page.GotoAsync(S.BaseUrl, new() { WaitUntil = WaitUntilState.DOMContentLoaded });
+        await page.GetByLabel("User Name").FillAsync(user);
+        if (S.Password.Length > 0) await page.GetByLabel("Password").FillAsync(S.Password);
+        await page.GetByRole(AriaRole.Button, new() { Name = "Log In" }).ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = user, Exact = true }).WaitForAsync();   // the user menu: logged in, circuit up
+        return page;
+    }
+
+    ILocator Button(IPage p, string name) => p.GetByRole(AriaRole.Button, new() { Name = name, Exact = true });
+
+    /// <summary>A grid row holding both cell texts (only visible grids count, so hidden tabs never match).</summary>
+    ILocator Row(IPage p, string cell1, string cell2) => p.GetByRole(AriaRole.Row)
+        .Filter(new() { Has = p.GetByRole(AriaRole.Gridcell, new() { Name = cell1, Exact = true }) })
+        .Filter(new() { Has = p.GetByRole(AriaRole.Gridcell, new() { Name = cell2, Exact = true }) });
+
+    ILocator Alert(IPage p, string text) => p.GetByRole(AriaRole.Alert).Filter(new() { HasTextString = text }).Last;
+
+    ILocator WorkflowLink(IPage p, string caption) => p.GetByRole(AriaRole.Main).GetByRole(AriaRole.Link, new() { Name = caption, Exact = true });
+
+    ILocator SelectedViewTab(IPage p) => p.GetByRole(AriaRole.Main).GetByRole(AriaRole.Tab, new() { Selected = true })
+        .Filter(new() { Has = p.Locator(".xaf-close-tab-button:visible") });
+
+    async Task Refresh(IPage p) => await p.GetByRole(AriaRole.Button, new() { NameRegex = new Regex("^Refresh") }).ClickAsync();
+
+    /// <summary>Open a navigation item (expanding its group first) and refresh it: a reused tab can hold stale rows.</summary>
+    async Task Nav(IPage p, string group, string item)
+    {
+        var entry = p.GetByRole(AriaRole.Treeitem, new() { Name = item, Exact = true });
+        if (!await entry.IsVisibleAsync()) await p.GetByRole(AriaRole.Application, new() { Name = group, Exact = true }).ClickAsync();
+        await entry.ClickAsync();
+        await Expect(SelectedViewTab(p)).ToContainTextAsync(item);
+        await Refresh(p);
+    }
+
+    /// <summary>Pick a value in a DevExpress combo; its own dropdown is found through aria-controls (others may linger).</summary>
+    async Task Pick(IPage p, string combo, string option)
+    {
+        var box = p.GetByRole(AriaRole.Combobox, new() { Name = combo, Exact = true });
+        await box.ClickAsync();
+        await p.Keyboard.PressAsync("Alt+ArrowDown");
+        var list = await box.GetAttributeAsync("aria-controls");
+        await p.Locator($"[id='{list}']").GetByRole(AriaRole.Option, new() { Name = option, Exact = true }).ClickAsync();
+        await Expect(box).ToHaveValueAsync(option);
+    }
+
+    /// <summary>Save the nested object's tab, then close it; focus returns to the owning definition.</summary>
+    async Task SaveAndCloseTab(IPage p)
+    {
+        await Button(p, "Save").ClickAsync();
+        await Expect(Button(p, "Save")).ToBeDisabledAsync();   // saved: nothing pending
+        await SelectedViewTab(p).Locator(".xaf-close-tab-button:visible").ClickAsync();
+        await Expect(SelectedViewTab(p)).ToContainTextAsync("purchase-request");
+    }
+
+    /// <summary>Run a choice action: one item runs on click, several drop down.</summary>
+    async Task Choose(IPage p, string action, string item)
+    {
+        await Button(p, action).ClickAsync();
+        var choice = p.Locator(".dxbl-dropdown, .dxbl-popup, [role=menu]").GetByText(item, new() { Exact = true }).Last;
+        try { await choice.ClickAsync(new() { Timeout = 3000 }); }
+        catch (TimeoutException) { }   // single item: the click already ran it
+    }
+
+    async Task Decide(IPage p, string outcome)
+    {
+        await Choose(p, "Decide", outcome);
+        await Expect(Button(p, "Decide")).ToBeHiddenAsync();   // decided: no outcomes left for this task
+    }
+
+    async Task NewRequest(IPage p, string title, decimal amount)
+    {
+        await Nav(p, "Default", "Purchase Request");
+        await Button(p, "New").ClickAsync();
+        await p.GetByRole(AriaRole.Textbox, new() { Name = "Title" }).FillAsync(title);
+        await p.GetByRole(AriaRole.Spinbutton, new() { Name = "Amount" }).FillAsync(amount.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        await Button(p, "Save").ClickAsync();
+        await Expect(Button(p, "Start workflow")).ToBeVisibleAsync();
+    }
+
+    async Task OpenRequest(IPage p, string title)
+    {
+        await Nav(p, "Default", "Purchase Request");
+        await p.GetByRole(AriaRole.Gridcell, new() { Name = title, Exact = true }).ClickAsync();
+        await Expect(SelectedViewTab(p)).ToContainTextAsync(title);
+        await Refresh(p);   // the tab may be the one opened earlier
+    }
+
+    async Task OpenTask(IPage p, string subject, string stateKey)
+    {
+        await Nav(p, "Workflow", "Workflow Task");
+        await Row(p, subject, stateKey).GetByRole(AriaRole.Gridcell, new() { Name = subject, Exact = true }).ClickAsync();
+        await Expect(Button(p, "Decide")).ToBeVisibleAsync();
+    }
+
+    string ShotPath(string name)
+    {
+        var dir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, S.ScreenshotDir));
+        Directory.CreateDirectory(dir);
+        return Path.Combine(dir, name + ".png");
+    }
+
+    async Task Shot(IPage p, string name)
+    {
+        var path = ShotPath(name);
+        await p.ScreenshotAsync(new() { Path = path, Animations = ScreenshotAnimations.Disabled });
+        TestContext.AddTestAttachment(path);
+    }
+}

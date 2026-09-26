@@ -480,3 +480,7 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# The E2E project folder matches the *.e2e trace-file pattern above; keep it, but not its run screenshots.
+!tests/XafStateless.E2E/
+tests/XafStateless.E2E/screenshots/
