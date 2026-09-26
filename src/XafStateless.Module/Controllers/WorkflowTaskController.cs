@@ -57,8 +57,8 @@ public sealed class WorkflowTaskController : ObjectViewController<DetailView, Wo
     }
 }
 
-/// <summary>The Tasks navigation list: open tasks of the logged-on user's roles (the roles are read from the user security
-/// logged on, so no secured role read is needed).</summary>
+/// <summary>The Tasks navigation list: open tasks of the logged-on user's roles, or all open tasks for an administrator (the
+/// roles are read from the user security logged on, so no secured role read is needed).</summary>
 public sealed class MyTasksController : ObjectViewController<ListView, WorkflowTask>
 {
     const string Key = "XafStateless.MyOpenTasks";
@@ -72,10 +72,15 @@ public sealed class MyTasksController : ObjectViewController<ListView, WorkflowT
     protected override void OnActivated()
     {
         base.OnActivated();
-        var roles = WorkflowCommand.RoleNames(Application);
-        View.CollectionSource.Criteria[Key] = roles.Count == 0
-            ? CriteriaOperator.Parse("1 = 0")
-            : CriteriaOperator.And(new BinaryOperator(nameof(WorkflowTask.State), TaskState.Open), new InOperator(nameof(WorkflowTask.Role), roles));
+        View.CollectionSource.Criteria[Key] = Criteria(WorkflowCommand.RoleNames(Application), WorkflowCommand.IsAdministrator(Application));
+    }
+
+    /// <summary>Open tasks: every one for an administrator, else only those of the user's roles.</summary>
+    internal static CriteriaOperator Criteria(IReadOnlyList<string> roles, bool administrator)
+    {
+        var open = new BinaryOperator(nameof(WorkflowTask.State), TaskState.Open);
+        if (administrator) return open;
+        return roles.Count == 0 ? CriteriaOperator.Parse("1 = 0") : CriteriaOperator.And(open, new InOperator(nameof(WorkflowTask.Role), roles));
     }
 
     protected override void OnDeactivated()

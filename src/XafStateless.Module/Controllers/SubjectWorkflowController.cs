@@ -8,12 +8,13 @@ using XafStateless.Module.Services;
 
 namespace XafStateless.Module.Controllers;
 
-/// <summary>Start a workflow on a subject, and fire its manual transitions.</summary>
+/// <summary>Start a workflow on a subject, fire its manual transitions, and open its current task.</summary>
 public sealed class SubjectWorkflowController : ViewController<DetailView>
 {
-    public const string StartId = "Workflow.Start", TransitionId = "Workflow.Transition";
+    public const string StartId = "Workflow.Start", TransitionId = "Workflow.Transition", OpenTaskActionId = "Workflow.OpenTask";
 
     readonly SingleChoiceAction start, transition;
+    readonly SimpleAction openTask;
     WorkflowRuntime? runtime;
 
     public SubjectWorkflowController()
@@ -25,6 +26,8 @@ public sealed class SubjectWorkflowController : ViewController<DetailView>
         transition = new SingleChoiceAction(this, TransitionId, PredefinedCategory.Edit)
         { Caption = "Transition", ItemType = SingleChoiceActionItemType.ItemIsOperation, ShowItemsOnClick = true };
         transition.Execute += (_, e) => Run(c => runtime!.Fire(c, SubjectType, Subject!.ID, (string)e.SelectedChoiceActionItem.Data));
+        openTask = new SimpleAction(this, OpenTaskActionId, PredefinedCategory.Edit) { Caption = "Open task" };
+        openTask.Execute += OpenTask_Execute;
     }
 
     IWorkflowSubject? Subject => View.CurrentObject as IWorkflowSubject;
@@ -35,17 +38,22 @@ public sealed class SubjectWorkflowController : ViewController<DetailView>
         base.OnActivated();
         runtime = Application.ServiceProvider.GetRequiredService<WorkflowRuntime>();
         View.CurrentObjectChanged += View_CurrentObjectChanged;
+        View.ObjectSpace.Committed += ObjectSpace_Changed;
+        View.ObjectSpace.Reloaded += ObjectSpace_Changed;   // Refresh() raises Reloaded (IObjectSpace has no Refreshed)
         Refill();
     }
 
     protected override void OnDeactivated()
     {
         View.CurrentObjectChanged -= View_CurrentObjectChanged;
+        View.ObjectSpace.Committed -= ObjectSpace_Changed;
+        View.ObjectSpace.Reloaded -= ObjectSpace_Changed;
         runtime = null;
         base.OnDeactivated();
     }
 
     void View_CurrentObjectChanged(object? sender, EventArgs e) => Refill();
+    void ObjectSpace_Changed(object? sender, EventArgs e) => Refill();
 
     void Run(Func<WorkflowCaller, RunResult> command)
     {
@@ -54,18 +62,58 @@ public sealed class SubjectWorkflowController : ViewController<DetailView>
         Frame.GetController<StateLockAppearanceController>()?.Reapply();   // the state may have changed: its locks with it
     }
 
+    /// <summary>The subject's Open task for its instance's current state, if <paramref name="secured"/> may read it. A database
+    /// query (projected, so no cached entity answers it): a stale space still sees a task closed elsewhere.</summary>
+    internal static Guid? OpenTaskId(IObjectSpace secured, IWorkflowSubject subject)
+    {
+        if (subject.Workflow is not { } instance) return null;
+        var id = instance.ID;
+        return secured.GetObjectsQuery<WorkflowTask>()
+            .Where(t => t.State == TaskState.Open && t.Instance!.ID == id && t.StateKey == t.Instance.StateKey)
+            .Select(t => (Guid?)t.ID).FirstOrDefault();
+    }
+
+    /// <summary>Re-checks availability, then shows the task in its own secured space (the new root view owns it).</summary>
+    void OpenTask_Execute(object? sender, SimpleActionExecuteEventArgs e)
+    {
+        var id = Subject is { } subject ? OpenTaskId(View.ObjectSpace, subject) : null;
+        if (id == null)
+        {
+            Application.ShowViewStrategy.ShowMessage("This task is no longer open.", InformationType.Warning);
+            Refill();
+            return;
+        }
+        var os = Application.CreateObjectSpace(typeof(WorkflowTask));
+        try
+        {
+            if (os.GetObjectByKey<WorkflowTask>(id.Value) is not { } task)
+            {
+                os.Dispose();
+                Application.ShowViewStrategy.ShowMessage("This task is no longer open.", InformationType.Warning);
+                return;
+            }
+            e.ShowViewParameters.CreatedView = Application.CreateDetailView(os, task, true);
+        }
+        catch
+        {
+            os.Dispose();
+            throw;
+        }
+    }
+
     /// <summary>Start: the Published definitions for this subject type, while no workflow runs and the user may write the
-    /// subject. Transition: the manual transitions the runtime says this user may fire now.</summary>
+    /// subject. Transition: the manual transitions the runtime says this user may fire now. Open task: see OpenTaskId.</summary>
     void Refill()
     {
         start.Items.Clear();
         transition.Items.Clear();
         if (Subject is not { } subject)
         {
-            (start.Active["Subject"], transition.Active["Subject"]) = (false, false);
+            (start.Active["Subject"], transition.Active["Subject"], openTask.Active["Subject"]) = (false, false, false);
             return;
         }
-        (start.Active["Subject"], transition.Active["Subject"]) = (true, true);
+        (start.Active["Subject"], transition.Active["Subject"], openTask.Active["Subject"]) = (true, true, true);
+        openTask.Active["HasOpenTask"] = OpenTaskId(View.ObjectSpace, subject) != null;
         start.Active["NotStarted"] = subject.Workflow == null;
         // The runtime refuses Start without Write on the subject; Transition hides itself (Available is empty then).
         start.Active["Write"] = Application.Security is not IRequestSecurityStrategy security || security.CanWrite(View.ObjectSpace, subject);

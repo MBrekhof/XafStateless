@@ -11,8 +11,15 @@ namespace XafStateless.Module.Controllers;
 public static class WorkflowCommand
 {
     /// <summary>The logged-on user's role names (none without security).</summary>
-    public static IReadOnlyList<string> RoleNames(XafApplication app) =>
-        (app.Security?.User as IPermissionPolicyUser)?.Roles.Select(r => r.Name).ToList() ?? [];
+    public static IReadOnlyList<string> RoleNames(XafApplication app) => RoleNames(app.Security?.User);
+
+    internal static IReadOnlyList<string> RoleNames(object? user) =>
+        (user as IPermissionPolicyUser)?.Roles.Select(r => r.Name).ToList() ?? [];
+
+    /// <summary>True when the logged-on user has a role with IsAdministrative set (never decided by a role name).</summary>
+    public static bool IsAdministrator(XafApplication app) => IsAdministrator(app.Security?.User);
+
+    internal static bool IsAdministrator(object? user) => (user as IPermissionPolicyUser)?.Roles.Any(r => r.IsAdministrative) == true;
 
     /// <summary>The current user; reads through <paramref name="secured"/>, writes through non-secured command spaces.</summary>
     public static WorkflowCaller Caller(XafApplication app, IObjectSpace secured)

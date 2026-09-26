@@ -9,6 +9,7 @@ using XafStateless.Demo.Module.BusinessObjects;
 using XafStateless.Engine;
 using XafStateless.Engine.Tests;
 using XafStateless.Module.BusinessObjects;
+using XafStateless.Module.Controllers;
 using XafStateless.Module.Services;
 
 namespace XafStateless.Module.Tests;
@@ -17,7 +18,7 @@ namespace XafStateless.Module.Tests;
 /// logged on as an approver and as a designer.</summary>
 public class PermissionTests : IClassFixture<TestDb>
 {
-    const string Approver = "approver", Designer = "designer", Reader = "reader", Outsider = "outsider", Others = "Others";
+    const string Approver = "approver", Designer = "designer", Reader = "reader", Outsider = "outsider", Admin = "admin", Others = "Others";
     readonly TestDb db;
     readonly WorkflowRuntime rt = new(new DefinitionStore(), TimeProvider.System);
     readonly DefinitionService svc = new(new DefinitionStore());
@@ -39,7 +40,9 @@ public class PermissionTests : IClassFixture<TestDb>
         readers.AddTypePermission<PurchaseRequest>(SecurityOperations.Read, SecurityPermissionState.Allow);
         var outsiders = os.CreateObject<PermissionPolicyRole>();   // nothing on the subject type
         outsiders.Name = "Outsiders";
-        foreach (var (name, role) in new[] { (Approver, approvers), (Designer, designers), (Reader, readers), (Outsider, outsiders) })
+        var admins = os.CreateObject<PermissionPolicyRole>();   // administrative by the flag, not by the name
+        (admins.Name, admins.IsAdministrative) = ("Superusers", true);
+        foreach (var (name, role) in new[] { (Approver, approvers), (Designer, designers), (Reader, readers), (Outsider, outsiders), (Admin, admins) })
         {
             var user = os.CreateObject<ApplicationUser>();
             (user.UserName, user.IsActive) = (name, true);
@@ -369,5 +372,160 @@ public class PermissionTests : IClassFixture<TestDb>
             Assert.Equal((false, NeedsWrite), (r.Ok, r.Message));
         }
         Assert.Null(StateOf(fresh));
+    }
+
+    // ---- XSM-013: admins see all open tasks; Open task on the request ----
+
+    /// <summary>An open task of role <see cref="Others"/> on a fresh request; returns (request id, task id).</summary>
+    (Guid Request, Guid Task) ForeignOpenTask()
+    {
+        var name = Publish(new WorkflowDef($"o-{Guid.NewGuid():N}", 1, "draft",
+            [new("draft", "Draft", StateKind.Manual), new("review", "Review", StateKind.Task, TaskRole: Others), new("done", "Done", StateKind.Final)],
+            [new("draft", "Submit", "review"), new("review", "Approve", "done")]));
+        Guid request;
+        using (var os = db.NewObjectSpace())
+        {
+            var pr = os.CreateObject<PurchaseRequest>();
+            pr.Title = "Foreign";
+            os.CommitChanges();
+            request = pr.ID;
+        }
+        var other = db.Caller("other", Others);
+        Ok(rt.Start(other, typeof(PurchaseRequest), request, name));
+        Ok(rt.Fire(other, typeof(PurchaseRequest), request, "Submit"));
+        using var check = db.NewObjectSpace();
+        return (request, check.GetObjectsQuery<WorkflowTask>().Single(t => t.Instance!.SubjectId == request && t.State == TaskState.Open).ID);
+    }
+
+    /// <summary>A task written directly (runtime-owned rows need a runtime scope) on the request's instance.</summary>
+    Guid AddTask(Guid request, string stateKey, string role, TaskState state = TaskState.Open)
+    {
+        using var os = db.NewObjectSpace();
+        var t = os.CreateObject<WorkflowTask>();
+        (t.Instance, t.StateKey, t.Role, t.Subject, t.State) = (os.GetObjectByKey<PurchaseRequest>(request).Workflow, stateKey, role, "x", state);
+        using (RuntimeScope.Open(((DevExpress.ExpressApp.EFCore.EFCoreObjectSpace)os).DbContext)) os.CommitChanges();
+        return t.ID;
+    }
+
+    /// <summary>The Workflow Task list's own criteria for <paramref name="userName"/>, run in that user's secured space. The
+    /// user row comes from a live non-secured space: LogOn disposes its logon space, so security.User cannot lazy-load roles.</summary>
+    List<Guid> Listed(IObjectSpace user, string userName)
+    {
+        using var os = db.NewObjectSpace();
+        var u = os.FirstOrDefault<ApplicationUser>(x => x.UserName == userName);
+        return user.GetObjects<WorkflowTask>(MyTasksController.Criteria(WorkflowCommand.RoleNames(u), WorkflowCommand.IsAdministrator(u)))
+            .Select(t => t.ID).ToList();
+    }
+
+    [Fact] public void Administrator_is_the_IsAdministrative_role_not_a_role_name()
+    {
+        using var os = db.NewObjectSpace();
+        Assert.True(WorkflowCommand.IsAdministrator(os.FirstOrDefault<ApplicationUser>(u => u.UserName == Admin)));   // role "Superusers"
+        Assert.False(WorkflowCommand.IsAdministrator(os.FirstOrDefault<ApplicationUser>(u => u.UserName == Approver)));
+        Assert.False(WorkflowCommand.IsAdministrator((object?)null));
+    }
+
+    [Fact] public void Task_list_admin_sees_every_open_task_participant_only_own_role()
+    {
+        var (_, foreign) = ForeignOpenTask();
+        using var approverProvider = LogOn(Approver, out var approverSecurity);
+        Guid decided, own, withSuperseded;
+        using (var user = approverProvider.CreateObjectSpace())
+        {
+            (_, decided) = Submitted(user, approverSecurity);
+            Ok(rt.Decide(Caller(user, approverSecurity, Approver, "Approvers"), decided, "Reject"));
+            (withSuperseded, own) = Submitted(user, approverSecurity);
+        }
+        var superseded = AddTask(withSuperseded, "approval", "Approvers", TaskState.Superseded);
+
+        using (var provider = LogOn(Admin))
+        using (var user = provider.CreateObjectSpace())
+        {
+            var listed = Listed(user, Admin);
+            Assert.Contains(foreign, listed);
+            Assert.Contains(own, listed);
+            Assert.DoesNotContain(decided, listed);
+            Assert.DoesNotContain(superseded, listed);
+        }
+        using (var user = approverProvider.CreateObjectSpace())
+        {
+            var listed = Listed(user, Approver);
+            Assert.Contains(own, listed);
+            Assert.DoesNotContain(foreign, listed);
+            Assert.DoesNotContain(decided, listed);
+            Assert.DoesNotContain(superseded, listed);
+        }
+        using (var provider = LogOn(Outsider))
+        using (var user = provider.CreateObjectSpace())
+            Assert.Empty(Listed(user, Outsider));   // no task role: nothing listed
+    }
+
+    static Guid? OpenTask(IObjectSpace user, Guid request) =>
+        SubjectWorkflowController.OpenTaskId(user, user.GetObjectByKey<PurchaseRequest>(request));
+
+    [Fact] public void Open_task_available_to_approver_and_admin_for_the_current_open_task()
+    {
+        using var provider = LogOn(Approver, out var security);
+        Guid request, task;
+        using (var user = provider.CreateObjectSpace()) (request, task) = Submitted(user, security);
+        using (var user = provider.CreateObjectSpace()) Assert.Equal(task, OpenTask(user, request));
+        using var adminProvider = LogOn(Admin);
+        using (var user = adminProvider.CreateObjectSpace()) Assert.Equal(task, OpenTask(user, request));
+    }
+
+    [Fact] public void Open_task_not_available_without_workflow()
+    {
+        var (request, _) = NewRequest(false);
+        using var provider = LogOn(Admin);
+        using var user = provider.CreateObjectSpace();
+        Assert.Null(OpenTask(user, request));
+    }
+
+    [Fact] public void Open_task_not_available_for_a_closed_task()
+    {
+        using var provider = LogOn(Approver, out var security);
+        Guid request, task;
+        using (var user = provider.CreateObjectSpace()) (request, task) = Submitted(user, security);
+        using (var user = provider.CreateObjectSpace()) Ok(rt.Decide(Caller(user, security, Approver, "Approvers"), task, "Reject"));
+        using (var user = provider.CreateObjectSpace()) Assert.Null(OpenTask(user, request));
+    }
+
+    [Fact] public void Open_task_not_available_for_another_state_or_another_instance()
+    {
+        var (a, _) = NewRequest(true);   // both in draft
+        var (b, _) = NewRequest(true);
+        AddTask(a, "approval", "Approvers");            // open, but for a state its instance is not in
+        var onB = AddTask(b, "draft", "Approvers");     // open and current on b: another instance than a's
+        using var provider = LogOn(Approver);
+        using var user = provider.CreateObjectSpace();
+        Assert.Null(OpenTask(user, a));
+        Assert.Equal(onB, OpenTask(user, b));           // control
+    }
+
+    [Fact] public void Open_task_not_available_without_read_on_the_task()
+    {
+        using var approverProvider = LogOn(Approver, out var security);
+        Guid request, task;
+        using (var user = approverProvider.CreateObjectSpace()) (request, task) = Submitted(user, security);
+        using var readerProvider = LogOn(Reader);
+        using (var reader = readerProvider.CreateObjectSpace())
+        {
+            Assert.NotNull(reader.GetObjectByKey<PurchaseRequest>(request));   // control: the request itself is readable
+            Assert.Null(OpenTask(reader, request));
+        }
+        using var approver = approverProvider.CreateObjectSpace();
+        Assert.Equal(task, OpenTask(approver, request));
+    }
+
+    [Fact] public void Open_task_rechecked_on_execute_after_it_closed()
+    {
+        using var provider = LogOn(Approver, out var security);
+        Guid request, task;
+        using (var user = provider.CreateObjectSpace()) (request, task) = Submitted(user, security);
+        using var view = provider.CreateObjectSpace();   // the request view's space: available, then the task closes elsewhere
+        var subject = view.GetObjectByKey<PurchaseRequest>(request);
+        Assert.Equal(task, SubjectWorkflowController.OpenTaskId(view, subject));
+        using (var other = provider.CreateObjectSpace()) Ok(rt.Decide(Caller(other, security, Approver, "Approvers"), task, "Reject"));
+        Assert.Null(SubjectWorkflowController.OpenTaskId(view, subject));   // the same, now stale, space re-queries the database
     }
 }
