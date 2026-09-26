@@ -99,6 +99,7 @@ public class DesignerJourneyTests : PageTest
         await designer.SetViewportSizeAsync(1440, 1600);                        // the whole v2 graph, not clipped by the view's scroll area
         await diagram.ScrollIntoViewIfNeededAsync();
         await diagram.ScreenshotAsync(new() { Path = ShotPath("04-diagram-with-finance"), Animations = ScreenshotAnimations.Disabled });
+        TestContext.AddTestAttachment(ShotPath("04-diagram-with-finance"));
         await designer.SetViewportSizeAsync(1440, 900);
 
         // 5. The approver creates a request (Amount 50), starts it (now on v2) and submits it.

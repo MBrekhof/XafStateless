@@ -95,7 +95,8 @@ protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
 - `DefinitionGuard`:
   - keeps Published and Retired definitions immutable;
   - allows publishing only through `DefinitionService.Publish`;
-  - lets instances, tasks and notifications change only through the runtime.
+  - lets instance state and tasks change only through the runtime, and lets only the runtime create notifications
+    (a dispatcher may still update a notification's delivery fields).
 - `StateLockGuard`:
   - refuses a save that changes a field locked in the subject's current state;
   - refuses any change to the subject's `Workflow` link.
@@ -123,21 +124,34 @@ The diagram is drawn in the browser by the bundled Mermaid (no CDN). Add both sc
 <script src="_framework/blazor.server.js"></script>
 ```
 
-Without them the diagram area stays empty, and nothing reports an error.
+Without them the diagram view item cannot draw. It catches the failed script call and shows "Diagram scripts are not
+loaded" in place of the diagram; the rest of the view keeps working.
 
 ## 6. Roles
 
 Seed the roles in the host's `ModuleUpdater` with `WorkflowPermissions` (`XafStateless.Module.Services`). The demo
 version is in `XafStateless.Demo.Module/DatabaseUpdate/Updater.cs`.
 
-```csharp
-var approvers = ObjectSpace.CreateObject<PermissionPolicyRole>();
-approvers.Name = "Approvers";                           // name the role first: its task scope uses the name
-WorkflowPermissions.GrantParticipant(approvers, (typeof(PurchaseRequest), "PurchaseRequest_ListView"));
+A `ModuleUpdater` runs on every version bump and every `--forceUpdate`, so create and grant a role only when it is
+missing, the same way the demo's `CreateRole` does:
 
-var designers = ObjectSpace.CreateObject<PermissionPolicyRole>();
-designers.Name = "WorkflowDesigners";
-WorkflowPermissions.GrantDesigner(designers);
+```csharp
+public override void UpdateDatabaseAfterUpdateSchema() {
+    base.UpdateDatabaseAfterUpdateSchema();
+    CreateRole("Approvers", r => WorkflowPermissions.GrantParticipant(r, (typeof(PurchaseRequest), "PurchaseRequest_ListView")));
+    CreateRole("WorkflowDesigners", WorkflowPermissions.GrantDesigner);
+    ObjectSpace.CommitChanges();
+}
+
+PermissionPolicyRole CreateRole(string name, Action<PermissionPolicyRole> grant) {
+    var role = ObjectSpace.FirstOrDefault<PermissionPolicyRole>(r => r.Name == name);
+    if(role == null) {
+        role = ObjectSpace.CreateObject<PermissionPolicyRole>();
+        role.Name = name;          // name the role first: the participant's task scope uses the name
+        grant(role);
+    }
+    return role;
+}
 ```
 
 - **`GrantDesigner(role)`** grants:
@@ -222,8 +236,9 @@ public sealed class WorkflowTimerService(IServiceScopeFactory scopes, WorkflowRu
 
 Register it with `services.AddHostedService<WorkflowTimerService>();`.
 
-A recurring job in a scheduler the host already runs works the same way: open a scope and call `RunDueTimers` with a
-factory from that scope.
+Any scheduler the host already runs works the same way. For example, a **Hangfire recurring job** (cron `* * * * *`)
+whose job method opens a scope and calls `RunDueTimers` with an `INonSecuredObjectSpaceFactory` from that scope. Run one
+scheduler, not both.
 
 ## 9. Notification delivery
 

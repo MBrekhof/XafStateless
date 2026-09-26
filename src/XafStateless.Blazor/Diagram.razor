@@ -2,6 +2,10 @@
 
 <div class="xafstateless-diagram-root">
     <div class="xafstateless-diagram" @ref="container"></div>
+    @if (scriptsMissing)
+    {
+        <p class="xafstateless-diagram-missing">Diagram scripts are not loaded (mermaid.min.js, diagram.js): see docs/integrating.md.</p>
+    }
     @if (Messages.Count > 0)
     {
         <ul class="xafstateless-diagram-messages" style="color:#b00020;">
@@ -20,6 +24,7 @@
 
     ElementReference container;
     string rendered = "";
+    bool scriptsMissing;
 
     // Re-renders only when the text actually changed (Save/Publish re-fires this via a fresh Committed-triggered value,
     // but most re-renders of the surrounding page do not change MermaidText).
@@ -28,7 +33,14 @@
         if (MermaidText != rendered)
         {
             rendered = MermaidText;
-            await JS.InvokeVoidAsync("diagram.render", container, MermaidText);
+            try
+            {
+                await JS.InvokeVoidAsync("diagram.render", container, MermaidText);
+            }
+            catch (JSException)   // the host page lacks the script tags: say so instead of breaking the circuit
+            {
+                if (!scriptsMissing) { scriptsMissing = true; StateHasChanged(); }
+            }
         }
     }
 }
