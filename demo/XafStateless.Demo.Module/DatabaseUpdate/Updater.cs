@@ -36,8 +36,8 @@ public class Updater : ModuleUpdater {
         // If a role doesn't exist in the database, create this role
         var defaultRole = CreateDefaultRole();
         var adminRole = CreateAdminRole();
-        var approversRole = CreateRole("Approvers", r => WorkflowPermissions.GrantParticipant(r, (typeof(PurchaseRequest), "PurchaseRequest_ListView")));
-        var designersRole = CreateRole("WorkflowDesigners", WorkflowPermissions.GrantDesigner);
+        var approversRole = GrantRole("Approvers", r => WorkflowPermissions.GrantParticipant(r, (typeof(PurchaseRequest), "PurchaseRequest_ListView")));
+        var designersRole = GrantRole("WorkflowDesigners", WorkflowPermissions.GrantDesigner);
 
         ObjectSpace.CommitChanges(); //This line persists created object(s).
 
@@ -82,13 +82,14 @@ public class Updater : ModuleUpdater {
     public override void UpdateDatabaseBeforeUpdateSchema() {
         base.UpdateDatabaseBeforeUpdateSchema();
     }
-    PermissionPolicyRole CreateRole(string name, Action<PermissionPolicyRole> grant) {
+    /// <summary>Gets or creates the role, then grants on every run: the Grant methods only add what is missing (XSM-021).</summary>
+    PermissionPolicyRole GrantRole(string name, Action<PermissionPolicyRole> grant) {
         var role = ObjectSpace.FirstOrDefault<PermissionPolicyRole>(r => r.Name == name);
         if(role == null) {
             role = ObjectSpace.CreateObject<PermissionPolicyRole>();
-            role.Name = name;
-            grant(role);
+            role.Name = name;          // name the role first: the participant's task scope uses the name
         }
+        grant(role);
         return role;
     }
 

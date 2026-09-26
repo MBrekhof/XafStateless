@@ -163,32 +163,42 @@ loaded" in place of the diagram; the rest of the view keeps working.
 Seed the roles in the host's `ModuleUpdater` with `WorkflowPermissions` (`XafStateless.Module.Services`). The demo
 version is in `XafStateless.Demo.Module/DatabaseUpdate/Updater.cs`.
 
-A `ModuleUpdater` runs on every version bump and every `--forceUpdate`, so create and grant a role only when it is
-missing, the same way the demo's `CreateRole` does:
+A `ModuleUpdater` runs on every version bump and every `--forceUpdate`. Get or create the role, then call the grant on
+every run, the same way the demo's `GrantRole` does. The grant methods are safe to repeat: they add only what is missing.
 
 ```csharp
 public override void UpdateDatabaseAfterUpdateSchema() {
     base.UpdateDatabaseAfterUpdateSchema();
-    CreateRole("Approvers", r => WorkflowPermissions.GrantParticipant(r, (typeof(PurchaseRequest), "PurchaseRequest_ListView")));
-    CreateRole("WorkflowDesigners", WorkflowPermissions.GrantDesigner);
+    GrantRole("Approvers", r => WorkflowPermissions.GrantParticipant(r, (typeof(PurchaseRequest), "PurchaseRequest_ListView")));
+    GrantRole("WorkflowDesigners", WorkflowPermissions.GrantDesigner);
     ObjectSpace.CommitChanges();
 }
 
-PermissionPolicyRole CreateRole(string name, Action<PermissionPolicyRole> grant) {
+PermissionPolicyRole GrantRole(string name, Action<PermissionPolicyRole> grant) {
     var role = ObjectSpace.FirstOrDefault<PermissionPolicyRole>(r => r.Name == name);
     if(role == null) {
         role = ObjectSpace.CreateObject<PermissionPolicyRole>();
         role.Name = name;          // name the role first: the participant's task scope uses the name
-        grant(role);
     }
+    grant(role);                   // every run: adds only what is missing
     return role;
 }
 ```
 
-**An existing role with the same name is left alone.** `CreateRole` grants only when it creates the role, so if the
-host already has an `Approvers` role, or you later add a second subject to `GrantParticipant`, the workflow grants are
-never added and the role's users miss subject access, task reads and navigation. Pick role names the host does not use
-yet, or grant the missing permissions to the existing role yourself (an idempotent grant helper is card XSM-021).
+**What repeating the grants does and does not do:**
+- It adds a missing permission, and fills an operation state that is still unset (a navigation item the role already
+  has a row for is left as it is, even with no state). So a host that already had an
+  `Approvers` role gets the workflow grants on the next update, and a subject added to `GrantParticipant` later adds its
+  own rows.
+- It never changes an explicit Allow or Deny already on a matching row. Rows are matched by type, by member, and for
+  object permissions by the exact criteria text: a state an admin set on a seeded row survives, but if the admin edits a
+  seeded row's criteria, the next run adds the original row again next to it. To narrow a seeded grant, set a Deny
+  rather than rewriting its criteria. (The `Workflow` link stays protected by
+  the `StateLockGuard` whatever the permission says.)
+- It never revokes. Removing a subject from the arguments, or deleting a seeded row, does not take the access away; the
+  next run recreates a deleted row. Revoke in the role itself.
+- Roles seeded before this change carry one combined instance permission (`SubjectType In (...)`). The next run adds one
+  row per subject type next to it; both grant the same access, so the old row can stay or be deleted.
 
 - **`GrantDesigner(role)`** grants:
   - full CRUD on definitions, states, transitions and effects;
