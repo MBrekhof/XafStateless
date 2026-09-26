@@ -11,14 +11,16 @@ namespace XafStateless.Module.Controllers;
 /// Detail views only: a list holds rows in different states, and a rule built from CurrentObject would apply to all of them.
 /// UI only; <see cref="StateLockGuard"/> refuses the save. The rule set depends on the current state, so every
 /// <see cref="Reapply"/> resets the rules cache before refreshing (dxdocs 113374).
-/// A rule exists for every member the pinned definition locks in ANY state, and fails ("1 = 0") where the current state
-/// does not lock it. AppearanceController restores an item only through a present rule whose criteria fail (ResetValue);
-/// an absent rule leaves the item as it was, so a member unlocked by a state change would otherwise stay disabled.
+/// A rule exists for every member the pinned definition locks in ANY state, plus every member this view has emitted a rule
+/// for since activation, and fails ("1 = 0") where the current state does not lock it. AppearanceController restores an
+/// item only through a present rule whose criteria fail (ResetValue); an absent rule leaves the item as it was, so a member
+/// unlocked by a state change, or by record navigation to an object on another (or no) definition, would stay disabled.
 /// </summary>
 public sealed class StateLockAppearanceController : ViewController<DetailView>
 {
     AppearanceController? appearance;
     DefinitionStore? store;
+    readonly HashSet<string> emitted = [];   // every member given a rule in this view: keeps getting a (reset) rule
 
     public StateLockAppearanceController() => TargetObjectType = typeof(IWorkflowSubject);
 
@@ -37,6 +39,7 @@ public sealed class StateLockAppearanceController : ViewController<DetailView>
         View.CurrentObjectChanged -= View_CurrentObjectChanged;
         if (appearance != null) appearance.CollectAppearanceRules -= Appearance_CollectAppearanceRules;
         (appearance, store) = (null, null);
+        emitted.Clear();
         base.OnDeactivated();
     }
 
@@ -55,7 +58,8 @@ public sealed class StateLockAppearanceController : ViewController<DetailView>
         // CachedAppearanceRuleProperties: the public IAppearanceRuleProperties whose DeclaringType is settable. AppearanceRule
         // needs it (ValidateByCriteria), and AppearanceAttribute's is always null.
         var (lockable, locked) = Locks();
-        foreach (var member in lockable)
+        emitted.UnionWith(lockable);
+        foreach (var member in emitted)
             e.AppearanceRules.Add(new CachedAppearanceRuleProperties(new AppearanceAttribute($"XafStateless.StateLock.{member}")
             {
                 TargetItems = member,

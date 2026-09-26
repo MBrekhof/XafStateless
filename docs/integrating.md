@@ -95,8 +95,9 @@ protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
 - `DefinitionGuard`:
   - keeps Published and Retired definitions immutable;
   - allows publishing only through `DefinitionService.Publish`;
-  - lets instance state and tasks change only through the runtime, and lets only the runtime create notifications
-    (a dispatcher may still update a notification's delivery fields).
+  - lets instance state and tasks change only through the runtime;
+  - lets only the runtime insert notifications. Only inserts are restricted: any other change to a notification (a
+    dispatcher's update, a delete) passes.
 - `StateLockGuard`:
   - refuses a save that changes a field locked in the subject's current state;
   - refuses any change to the subject's `Workflow` link.
