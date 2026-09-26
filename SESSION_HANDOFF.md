@@ -6,14 +6,20 @@
 
 - Tasks 1–9 of the plan are implemented, task-reviewed and fixed (cards XSM-001…XSM-009, XSM-011, XSM-012).
 - A final whole-branch review ran; its Critical/Important findings were fixed in `5152782` and re-reviewed clean.
-- Tests: `dotnet test XafStateless.slnx` → Engine 37, Module 87, all green. E2E (`tests/XafStateless.E2E`, needs the demo running on a freshly seeded database — see README) passed 1/1.
+- Tests: `dotnet test XafStateless.slnx` → Engine 37, Module 95, all green. E2E (`tests/XafStateless.E2E`, needs the demo running on a freshly seeded database — see README) passed 1/1.
 - Docs: `README.md` (pitch, comparison with XAF StateMachine, screenshots, how to run), `docs/integrating.md` (host contract + limits), architecture diagram `docs/architecture/xafstateless-architecture.html`.
 
-## Demo gate — waiting for you
+## BPGDemo trial — done
 
-Task 10 (trial integration into the target host application, card XSM-010) is **not started**. The plan stops here: review the demo first, then give an explicit go.
+The trial integration (plan `docs/superpowers/plans/2026-09-26-bpgdemo-trial.md`, XSM-015/016/017 + report XSM-010) ran on
+2026-09-26. Result and findings: `docs/host-trial.md`; doc gaps it found are fixed in `docs/integrating.md`.
 
-Run the demo: see README "How to run" (build, then the exe under `demo/XafStateless.Demo.Blazor.Server/bin/Debug/net10.0/`). Users `designer` / `approver` / `Admin`, empty passwords (development only).
+- Trial branch `trial/xafstateless` in worktree `C:\Projects\BPGDemo.trial` (commits `d5b1f93`, `e804d3c`, `b63164f`):
+  local, never pushed. Keep or remove it (`git -C C:\Projects\BPGDemo worktree remove C:\Projects\BPGDemo.trial`) is your call.
+- Trial database `bpgdemoTrial` on `(localdb)\mssqllocaldb` stays until the worktree goes.
+- Follow-up cards: XafStateless XSM-018 (Version 0), XSM-019 (a11y), XSM-020 (icon/caption), XSM-021 (idempotent grants);
+  bpg WF-007 (hook bypass), JOBS-001 (job plumbing), AUTO-003 (outbox Name, unverified), CARD-1825 (tabs, second sighting).
+- Tests: Engine 37, Module 95.
 
 ## Needs your action
 

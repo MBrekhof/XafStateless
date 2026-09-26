@@ -43,6 +43,15 @@ Blazor module.
 
 Demo file: `XafStateless.Demo.Module/BusinessObjects/DemoDbContext.cs`.
 
+Namespaces: the entities are in `XafStateless.Module.BusinessObjects`, the two guards in `XafStateless.Module.Services`,
+and `ConfigureXafStateless()` is an extension method in `XafStateless.Module`:
+
+```csharp
+using XafStateless.Module;
+using XafStateless.Module.BusinessObjects;
+using XafStateless.Module.Services;
+```
+
 ### DbSets
 
 Add one DbSet per workflow entity, plus one for each subject class (see step 7):
@@ -62,6 +71,7 @@ public DbSet<WorkflowNotification> WorkflowNotifications { get; set; }
 In `OnModelCreating`:
 
 ```csharp
+modelBuilder.UseDeferredDeletion(this);    // REQUIRED (maps GCRecord)
 modelBuilder.UseOptimisticLock();          // REQUIRED
 modelBuilder.ConfigureXafStateless();      // unique indexes, key lengths
 ```
@@ -72,8 +82,13 @@ racing a transition, collide. Exactly one wins, and the loser is retried. Withou
 New XAF apps have `UseOptimisticLock()` in the generated DbContext; check that yours still does.
 
 `ConfigureXafStateless()` enforces "at most one Draft and one Published per name" and "one instance per subject" with
-filtered unique indexes. The filters use SQL Server syntax and skip soft-deleted rows (`[GCRecord] = 0`), so under
-`UseDeferredDeletion` (the template default) a deleted draft does not block its replacement.
+filtered unique indexes. The filters use SQL Server syntax and skip soft-deleted rows (`[GCRecord] = 0`), so a deleted
+draft does not block its replacement.
+
+**`UseDeferredDeletion(this)` is required too.** `BaseObject.GCRecord` is `[NotMapped]` until deferred deletion maps
+it, and both the index filters and `DefinitionGuard` read that column. New XAF apps have the call in the generated
+DbContext (the demo and the BPGDemo skeleton both do); a host that removed it would fail at schema creation. (Read in
+code; not tried on a host without it.)
 
 ### The two guards
 
@@ -81,13 +96,22 @@ Add both interceptors in `OnConfiguring`, so they run for every context, whoever
 database updater, the non-secured command spaces, tests):
 
 ```csharp
+#pragma warning disable XAF0031 // proxies come from UseConnectionString in the host's WithDbContext; this only adds interceptors
 protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
     var registered = optionsBuilder.Options.FindExtension<CoreOptionsExtension>()?.Interceptors;
     foreach(var guard in new IInterceptor[] { DefinitionGuard.Instance, StateLockGuard.Instance })
         if(registered?.Contains(guard) != true)
             optionsBuilder.AddInterceptors(guard);
 }
+#pragma warning restore XAF0031
 ```
+
+Without the pragma the DevExpress analyzer reports **XAF0031** ("Add the UseChangeTrackingProxies() call") on this
+override, because it configures a `DbContextOptionsBuilder` without calling `UseChangeTrackingProxies()`. Here it is a
+false positive: XAF's `UseConnectionString` in the host's `WithDbContext` already enables the change-tracking proxies
+(DevExpress: "Change Tracking in EF Core DbContext"), and the override only adds interceptors. If your host configures
+its provider with `UseSqlServer` instead of `UseConnectionString`, it needs `UseChangeTrackingProxies()` there anyway,
+workflow or not.
 
 (`CoreOptionsExtension` is in `Microsoft.EntityFrameworkCore.Infrastructure`, `IInterceptor` in
 `Microsoft.EntityFrameworkCore.Diagnostics`, and both guards in `XafStateless.Module.Services`.)
@@ -111,6 +135,8 @@ protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
 In `ConfigureServices` (demo: `Startup.cs`, where it comes before `AddXaf`):
 
 ```csharp
+using XafStateless.Module;   // AddXafStateless is an extension method in this namespace
+// ...
 services.AddXafStateless();
 ```
 
@@ -159,6 +185,11 @@ PermissionPolicyRole CreateRole(string name, Action<PermissionPolicyRole> grant)
 }
 ```
 
+**An existing role with the same name is left alone.** `CreateRole` grants only when it creates the role, so if the
+host already has an `Approvers` role, or you later add a second subject to `GrantParticipant`, the workflow grants are
+never added and the role's users miss subject access, task reads and navigation. Pick role names the host does not use
+yet, or grant the missing permissions to the existing role yourself (an idempotent grant helper is card XSM-021).
+
 - **`GrantDesigner(role)`** grants:
   - full CRUD on definitions, states, transitions and effects;
   - read on instances, tasks and notifications;
@@ -192,7 +223,8 @@ PermissionPolicyRole CreateRole(string name, Action<PermissionPolicyRole> grant)
 ## 7. A subject class
 
 Any `BaseObject` class becomes a workflow subject by implementing `IWorkflowSubject` (demo:
-`XafStateless.Demo.Module/BusinessObjects/PurchaseRequest.cs`):
+`XafStateless.Demo.Module/BusinessObjects/PurchaseRequest.cs`). `IWorkflowSubject` and `WorkflowInstance` are in
+`XafStateless.Module.BusinessObjects`:
 
 ```csharp
 [DefaultClassOptions]
@@ -207,6 +239,12 @@ public class PurchaseRequest : BaseObject, IWorkflowSubject
 
 - `ID` comes from `BaseObject`. Subjects must be Guid-keyed.
 - Add a DbSet for the class.
+- `WorkflowInstance?` needs a nullable context. A host project without `<Nullable>enable</Nullable>` (the XAF template
+  default) gets warning CS8632 on it: put `#nullable enable` at the top of the subject's file, or drop the `?`.
+- **Web API (optional).** A host that exposes the subject through the XAF Web API registers it like any business
+  object, in `AddXafWebApi` → `ConfigureOptions`: `options.BusinessObject<PurchaseRequest>();`. The guards apply to
+  API writes too: changing a locked field or deleting a subject whose workflow is in a non-Final state returns 400
+  with the guard's message.
 - `Workflow` is the link to the running instance. The runtime owns it and the guard refuses user changes. Its display
   text is the current state's caption, so list views can show and filter on it.
 - On a subject's detail view, the module adds the **Start workflow** action (Published definitions whose target type is
@@ -252,7 +290,8 @@ Register it with `services.AddHostedService<WorkflowTimerService>();`.
 
 Any scheduler the host already runs works the same way. For example, a **Hangfire recurring job** (cron `* * * * *`)
 whose job method opens a scope and calls `RunDueTimers` with an `INonSecuredObjectSpaceFactory` from that scope. Run one
-scheduler, not both.
+scheduler, not both. `docs/host-trial.md` shows this on a host with a command/handler job framework (the BPGDemo
+skeleton), where Hangfire's activator already gives each job run its own scope.
 
 ## 9. Notification delivery
 

@@ -33,12 +33,15 @@ public class DemoEFCoreDbContext : DbContext {
     public DbSet<PurchaseRequest> PurchaseRequests { get; set; }
 
     // The workflow guards run for every context, whoever builds it (XAF provider, updater, tests).
+    // XAF0031 is a false positive here: UseConnectionString in Startup enables the proxies; this only adds interceptors.
+#pragma warning disable XAF0031
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
         var registered = optionsBuilder.Options.FindExtension<CoreOptionsExtension>()?.Interceptors;
         foreach(var guard in new Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor[] { DefinitionGuard.Instance, StateLockGuard.Instance })
             if(registered?.Contains(guard) != true)
                 optionsBuilder.AddInterceptors(guard);
     }
+#pragma warning restore XAF0031
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
         base.OnModelCreating(modelBuilder);
