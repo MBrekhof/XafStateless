@@ -13,6 +13,14 @@ public sealed class DefinitionService(DefinitionStore store)
     public const string PendingChangesMessage = "Save or cancel your pending changes before publishing.";
     public const string LostRaceMessage = "The definition changed meanwhile (another edit or publish committed first). Reload it and publish again.";
 
+    /// <summary>max(Version)+1 over every live definition of <paramref name="name"/>, read past security: a caller who may not
+    /// read the published versions must still number after them, or the (Name, Version) index refuses the save.</summary>
+    public static int NextVersion(IObjectSpace os, string name)
+    {
+        var db = (os as EFCoreObjectSpace)?.DbContext ?? throw new NotSupportedException("Workflow definitions need an EF Core object space.");
+        return (RawSql.Max<WorkflowDefinition>(db, nameof(WorkflowDefinition.Version), nameof(WorkflowDefinition.Name), name) ?? 0) + 1;
+    }
+
     /// <summary>A Draft v(max+1): a deep copy of the Published version, or empty when none is published. Not committed.</summary>
     public WorkflowDefinition NewDraft(IObjectSpace os, string name)
     {
@@ -21,7 +29,7 @@ public sealed class DefinitionService(DefinitionStore store)
         var draft = os.CreateObject<WorkflowDefinition>();
         draft.Name = name;
         draft.State = DefinitionState.Draft;
-        draft.Version = (os.GetObjectsQuery<WorkflowDefinition>().Where(d => d.Name == name).Max(d => (int?)d.Version) ?? 0) + 1;
+        draft.Version = NextVersion(os, name);
         if (store.Published(os, name) is not { } src) return draft;
 
         (draft.TargetTypeName, draft.InitialStateKey) = (src.TargetTypeName, src.InitialStateKey);

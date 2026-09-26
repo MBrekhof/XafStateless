@@ -19,7 +19,7 @@ public class WorkflowDefinition : BaseObject, IStringLookupSource
 {
     [RuleRequiredField] public virtual string Name { get; set; } = "";            // stable key
     [RuleRequiredField] public virtual string TargetTypeName { get; set; } = "";  // full CLR name of an IWorkflowSubject class
-    public virtual int Version { get; set; }
+    [ModelDefault("AllowEdit", "False")] public virtual int Version { get; set; }   // set by NewDraft, or by OnSaving for New
     // Lifecycle fields: only NewDraft and Publish set them (DefinitionGuard enforces it); read-only on screen.
     [ModelDefault("AllowEdit", "False")] public virtual DefinitionState State { get; set; }
     [EditorAlias(StringLookup.Single)] public virtual string InitialStateKey { get; set; } = "";
@@ -30,6 +30,18 @@ public class WorkflowDefinition : BaseObject, IStringLookupSource
     [Aggregated] public virtual IList<WorkflowTransition> Transitions { get; set; } = new ObservableCollection<WorkflowTransition>();
 
     [NotMapped, Browsable(false)] public Type? TargetType => XafTypesInfo.Instance.FindTypeInfo(TargetTypeName)?.Type;
+
+    bool versionAssigned;   // not mapped: a field, and only for this object's life
+
+    /// <summary>A definition made with the New action never passes through NewDraft: number it here, max+1 per name. The
+    /// number is recomputed on every save while the object is new, so a refused save followed by a rename is renumbered.
+    /// ponytail: two new drafts of one name in one commit both get max+1; the one-draft-per-name index refuses that anyway.</summary>
+    public override void OnSaving()
+    {
+        base.OnSaving();
+        if (ObjectSpace?.IsNewObject(this) == true && (Version == 0 || versionAssigned))
+            (Version, versionAssigned) = (DefinitionService.NextVersion(ObjectSpace, Name), true);
+    }
 
     public IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames) =>
         memberName == nameof(InitialStateKey) ? States.Select(s => s.Key) : [];

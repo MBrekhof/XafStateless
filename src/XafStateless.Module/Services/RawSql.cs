@@ -25,12 +25,7 @@ internal static class RawSql
         var rows = new List<object?[]>();
         var list = keys.Distinct().ToList();
         if (list.Count == 0) return rows;
-        var et = ctx.Model.FindEntityType(entityType) ?? throw new InvalidOperationException($"{entityType.Name} is not mapped.");
-        var table = StoreObjectIdentifier.Table(et.GetTableName()!, et.GetSchema());
-        string Col(string property) => $"[{et.FindProperty(property)!.GetColumnName(table)}]";
-        var from = (et.GetSchema() is { } schema ? $"[{schema}]." : "") + $"[{et.GetTableName()}]";
-        var live = et.FindProperty(EFCoreDeferredDeletionInterceptor.GCRecordFieldName) != null
-            ? $" AND {Col(EFCoreDeferredDeletionInterceptor.GCRecordFieldName)} = 0" : "";
+        var (from, Col, live) = Target(ctx, entityType);
 
         ctx.Database.OpenConnection();
         try
@@ -61,6 +56,37 @@ internal static class RawSql
         }
         finally { ctx.Database.CloseConnection(); }
         return rows;
+    }
+
+    /// <summary>MAX(<paramref name="column"/>) over the live rows whose <paramref name="whereProperty"/> equals
+    /// <paramref name="value"/>; null when there are none.</summary>
+    public static int? Max<T>(DbContext ctx, string column, string whereProperty, string value)
+    {
+        var (from, Col, live) = Target(ctx, typeof(T));
+        ctx.Database.OpenConnection();
+        try
+        {
+            using var cmd = ctx.Database.GetDbConnection().CreateCommand();
+            cmd.Transaction = ctx.Database.CurrentTransaction?.GetDbTransaction();
+            var p = cmd.CreateParameter();
+            (p.ParameterName, p.Value) = ("@p0", value);
+            cmd.Parameters.Add(p);
+            cmd.CommandText = $"SELECT MAX({Col(column)}) FROM {from} WHERE {Col(whereProperty)} = @p0{live}";
+            return cmd.ExecuteScalar() is int max ? max : null;
+        }
+        finally { ctx.Database.CloseConnection(); }
+    }
+
+    /// <summary>Table name, column mapper and the live-rows filter of <paramref name="entityType"/>, all from the EF model.</summary>
+    static (string From, Func<string, string> Col, string Live) Target(DbContext ctx, Type entityType)
+    {
+        var et = ctx.Model.FindEntityType(entityType) ?? throw new InvalidOperationException($"{entityType.Name} is not mapped.");
+        var table = StoreObjectIdentifier.Table(et.GetTableName()!, et.GetSchema());
+        string Col(string property) => $"[{et.FindProperty(property)!.GetColumnName(table)}]";
+        var from = (et.GetSchema() is { } schema ? $"[{schema}]." : "") + $"[{et.GetTableName()}]";
+        var live = et.FindProperty(EFCoreDeferredDeletionInterceptor.GCRecordFieldName) != null
+            ? $" AND {Col(EFCoreDeferredDeletionInterceptor.GCRecordFieldName)} = 0" : "";
+        return (from, Col, live);
     }
 
     /// <summary>The foreign-key property behind <typeparamref name="T"/>'s reference <paramref name="navigation"/>.</summary>

@@ -1,3 +1,4 @@
+using DevExpress.Data.Filtering;
 using DevExpress.EntityFrameworkCore.Security;
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.EFCore.DataLocking;
@@ -201,6 +202,32 @@ public class PermissionTests : IClassFixture<TestDb>
         user.CommitChanges();
         using var check = db.NewObjectSpace();
         Assert.Equal(DefinitionState.Draft, check.FirstOrDefault<WorkflowDefinition>(x => x.Name == name)!.State);
+    }
+
+    [Fact] public void New_definition_numbers_past_versions_the_caller_cannot_read()   // XSM-018 (Codex)
+    {
+        var name = PublishPurchaseRequest();   // published v1
+        var user = $"drafts-{Guid.NewGuid():N}";
+        using (var os = db.NewObjectSpace())
+        {
+            var role = os.CreateObject<PermissionPolicyRole>();
+            role.Name = user;   // may create and edit drafts, reads drafts only
+            role.AddTypePermission<WorkflowDefinition>(SecurityOperations.Create + ";" + SecurityOperations.Write, SecurityPermissionState.Allow);
+            role.AddObjectPermission<WorkflowDefinition>(SecurityOperations.Read, new BinaryOperator(nameof(WorkflowDefinition.State), DefinitionState.Draft).ToString(), SecurityPermissionState.Allow);
+            var u = os.CreateObject<ApplicationUser>();
+            (u.UserName, u.IsActive) = (user, true);
+            u.SetPassword("");
+            u.Roles.Add(role);
+            os.CommitChanges();
+            ((ISecurityUserWithLoginInfo)u).CreateUserLoginInfo(SecurityDefaults.PasswordAuthentication, os.GetKeyValueAsString(u));
+            os.CommitChanges();
+        }
+        using var secured = LogOn(user).CreateObjectSpace();
+        Assert.False(secured.GetObjectsQuery<WorkflowDefinition>().Any(d => d.Name == name));   // v1 is hidden from this caller
+        var draft = secured.CreateObject<WorkflowDefinition>();
+        (draft.Name, draft.TargetTypeName) = (name, typeof(PurchaseRequest).FullName!);
+        secured.CommitChanges();
+        Assert.Equal(2, draft.Version);
     }
 
     [Fact] public void Designer_can_publish_under_security()

@@ -186,6 +186,35 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         Assert.True(svc.Validate(os, d, Roles()).Ok);
     }
 
+    [Fact] public void Definition_created_with_New_gets_the_next_version()   // XSM-018: the list view's New left Version at 0
+    {
+        var (fresh, used) = (Unique(), Unique());
+        PublishNew(used);
+        using var os = db.NewObjectSpace();
+        WorkflowDefinition New(string name)
+        {
+            var d = os.CreateObject<WorkflowDefinition>();   // what the New action does: no NewDraft, Version untouched
+            (d.Name, d.TargetTypeName) = (name, typeof(PurchaseRequest).FullName!);
+            return d;
+        }
+        var (a, b) = (New(fresh), New(used));
+        os.CommitChanges();
+        Assert.Equal((1, 2), (a.Version, b.Version));
+    }
+
+    [Fact] public void Failed_New_renamed_and_retried_is_renumbered()   // XSM-018 (Codex): a refused save must not pin the number
+    {
+        var (taken, fresh) = (Unique(), Unique());
+        using (var seed = db.NewObjectSpace()) { Draft(seed, taken); seed.CommitChanges(); }   // 'taken' has draft v1
+        using var os = db.NewObjectSpace();
+        var d = os.CreateObject<WorkflowDefinition>();
+        (d.Name, d.TargetTypeName) = (taken, typeof(PurchaseRequest).FullName!);
+        Assert.ThrowsAny<Exception>(() => os.CommitChanges());   // one draft per name; v2 was assigned on the way
+        d.Name = fresh;
+        os.CommitChanges();
+        Assert.Equal(1, d.Version);
+    }
+
     [Fact] public void NewDraft_copies_published_deeply()
     {
         var name = Unique();
