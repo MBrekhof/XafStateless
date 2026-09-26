@@ -2,7 +2,7 @@
 
 ## Where things stand
 
-`master` and `poc/xafstateless` both on GitHub at the same commit. Plan: `docs/superpowers/plans/2026-09-25-xafstateless.md`.
+`master` is the only branch (`poc/xafstateless` deleted 2026-09-26; it held nothing `master` lacks). Plan: `docs/superpowers/plans/2026-09-25-xafstateless.md`.
 
 - Tasks 1–9 of the plan are implemented, task-reviewed and fixed (cards XSM-001…XSM-009, XSM-011, XSM-012).
 - A final whole-branch review ran; its Critical/Important findings were fixed in `5152782` and re-reviewed clean.
@@ -14,9 +14,8 @@
 The trial integration (plan `docs/superpowers/plans/2026-09-26-bpgdemo-trial.md`, XSM-015/016/017 + report XSM-010) ran on
 2026-09-26. Result and findings: `docs/host-trial.md`; doc gaps it found are fixed in `docs/integrating.md`.
 
-- Trial branch `trial/xafstateless` in worktree `C:\Projects\BPGDemo.trial` (commits `d5b1f93`, `e804d3c`, `b63164f`):
-  local, never pushed. Keep or remove it (`git -C C:\Projects\BPGDemo worktree remove C:\Projects\BPGDemo.trial`) is your call.
-- Trial database `bpgdemoTrial` on `(localdb)\mssqllocaldb` stays until the worktree goes.
+- Cleaned up 2026-09-26: the trial worktree, branch `trial/xafstateless` and database `bpgdemoTrial` are deleted;
+  BPGDemo is back to `master`. The trial's changes are described in `docs/host-trial.md` (Touch points).
 - Follow-up cards: XafStateless XSM-018 (Version 0), XSM-019 (a11y), XSM-020 (icon/caption), XSM-021 (idempotent grants);
   bpg WF-007 (hook bypass), JOBS-001 (job plumbing), AUTO-003 (outbox Name, unverified), CARD-1825 (tabs, second sighting).
 - Tests: Engine 37, Module 95.

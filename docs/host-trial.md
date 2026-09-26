@@ -14,7 +14,7 @@ hooks), XSM-017 (jobs), XSM-010 (this report). Carried out 2026-09-26.
 | | |
 |---|---|
 | Revisions | BPGDemo `83f3a98` (master), XafStateless `da61a65`, BPG `1246a00` |
-| Trial branch | `trial/xafstateless` in worktree `C:\Projects\BPGDemo.trial`: `d5b1f93` (XSM-015), `e804d3c` (XSM-016), `b63164f` (XSM-017). Local, not pushed. |
+| Trial branch | `trial/xafstateless` in worktree `C:\Projects\BPGDemo.trial`: `d5b1f93` (XSM-015), `e804d3c` (XSM-016), `b63164f` (XSM-017). Local, never pushed; branch, worktree and database deleted after this report. |
 | Why a worktree | BPG copies `C:\Projects\BPGDemo` as its skeleton (`XAF:SkeletonProjectPath`). The main tree stayed on `master` throughout. |
 | Database | `(localdb)\mssqllocaldb`, catalog `bpgdemoTrial`, set in the trial's `appsettings.Development.json` |
 | Run | exe from `bpgdemo.Blazor.Server\bin\Debug\net10.0`, always `--environment Development` (the exe ignores launch profiles; without it the host updates the `bpgdemo` catalog). The `bpgdemo.mdf` timestamp stayed unchanged through every run. |
