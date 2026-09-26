@@ -248,7 +248,9 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
                     var member = WorkflowMembers.Supported(x.Type).FirstOrDefault(m => m.Name == effect.Target)
                                  ?? throw new InvalidOperationException($"'{effect.Target}' cannot be set by a workflow");
                     member.SetValue(x.Subject, XafWorkflowEnvironment.ConvertValue(member.MemberType, effect.Value));
-                    (x.Scope ?? throw new InvalidOperationException("SetField runs only inside the runtime scope")).Allow(x.Subject.ID, member.Name);   // exempt from StateLockGuard, this member only
+                    var runtimeScope = x.Scope ?? throw new InvalidOperationException("SetField runs only inside the runtime scope");
+                    // Exempt from StateLockGuard, this member only; keyed by the EF entity type (never a proxy type), as the guard keys it.
+                    runtimeScope.Allow(runtimeScope.Context.Entry(x.Subject).Metadata.ClrType, x.Subject.ID, member.Name);
                     break;
                 case EffectKind.Notify:
                     var note = x.Os.CreateObject<WorkflowNotification>();

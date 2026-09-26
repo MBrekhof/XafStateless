@@ -17,7 +17,7 @@ namespace XafStateless.Module.Services;
 /// <item>A Modified <see cref="IWorkflowSubject"/> may not change a member locked in its instance's <b>persisted</b> state:
 /// the subject's Workflow link, the instance's StateKey and the state's locks are all read from the database at SavingChanges
 /// (<see cref="RawSql"/>: same connection and transaction, never rewritten by XAF security), never from tracked values.</item>
-/// <item>Inside a <see cref="RuntimeScope"/> bound to the saving context, only the (subject, member) pairs the runtime recorded
+/// <item>Inside a <see cref="RuntimeScope"/> bound to the saving context, only the (subject type, subject, member) entries the runtime recorded
 /// with <see cref="RuntimeScope.Allow"/> (one per SetField) are exempt; every other modified member is still checked.</item>
 /// <item>Outside a runtime scope the Workflow link cannot change, clearing included; it is checked first, so clearing it in
 /// the same save cannot dodge a lock.</item>
@@ -101,12 +101,12 @@ public sealed class StateLockGuard : SaveChangesInterceptor
         var candidates = new List<(EntityEntry Entry, string Member, string Caption)>();
         foreach (var e in modified)
         {
-            var subject = (IWorkflowSubject)e.Entity;
+            var (type, id) = Key(e);
             if (!instances.TryGetValue(persistedLink[Key(e)]!.Value, out var instance) || instance.Definition is not { } def
                 || !locks.TryGetValue((def, instance.StateKey), out var state))
                 continue;
             foreach (var member in state.Members)
-                if (e.Metadata.FindProperty(member) != null && e.Property(member).IsModified && scope?.IsAllowed(subject.ID, member) != true)
+                if (e.Metadata.FindProperty(member) != null && e.Property(member).IsModified && scope?.IsAllowed(type, id, member) != true)
                     candidates.Add((e, member, state.Caption));
         }
         if (candidates.Count == 0) return;

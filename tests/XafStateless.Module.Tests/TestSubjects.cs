@@ -17,6 +17,7 @@ public class ConvertedSubject : BaseObject, IWorkflowSubject
 public class OtherSubject : BaseObject, IWorkflowSubject
 {
     public virtual string Name { get; set; } = "";
+    [Precision(18, 2)] public virtual decimal Amount { get; set; }
     public virtual WorkflowInstance? Workflow { get; set; }
 }
 

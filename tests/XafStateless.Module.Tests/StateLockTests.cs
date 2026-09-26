@@ -277,6 +277,30 @@ public class StateLockTests : IClassFixture<TestDb>
         using (var ctx = db.NewSubjectsContext()) Assert.NotNull(ctx.OtherSubjects.SingleOrDefault(x => x.ID == id));
     }
 
+    [Fact] public void Runtime_exemption_is_per_subject_type()
+    {
+        // An OtherSubject sharing the in-flight request's ID and its instance (approval locks Amount). A scope exempting the
+        // request's Amount does not exempt the twin's Amount in the same save.
+        var id = Started(true, "Amount");
+        var instanceId = Saved(id).Workflow!.ID;
+        using (var ctx = db.NewSubjectsContext())
+        using (RuntimeScope.Open(ctx))
+        {
+            var twin = ctx.CreateProxy<OtherSubject>();
+            (twin.ID, twin.Name, twin.Amount, twin.Workflow) = (id, "Twin", 50, ctx.WorkflowInstances.Single(i => i.ID == instanceId));
+            ctx.OtherSubjects.Add(twin);
+            ctx.SaveChanges();
+        }
+        using (var ctx = db.NewSubjectsContext())
+        {
+            ctx.OtherSubjects.Single(x => x.ID == id).Amount = 999;
+            using var scope = RuntimeScope.Open(ctx);
+            scope.Allow(typeof(PurchaseRequest), id, nameof(PurchaseRequest.Amount));
+            AssertLocked(Record.Exception(() => ctx.SaveChanges()));
+        }
+        using (var ctx = db.NewSubjectsContext()) Assert.Equal(50m, ctx.OtherSubjects.Single(x => x.ID == id).Amount);
+    }
+
     [Fact] public void Subject_delete_is_allowed_in_final_state()
     {
         var id = Started(true);
@@ -363,7 +387,7 @@ public class StateLockTests : IClassFixture<TestDb>
             var subject = os.GetObjectByKey<PurchaseRequest>(id);
             (subject.Ordered, subject.Amount) = (true, 999);
             using var scope = RuntimeScope.Open(((EFCoreObjectSpace)os).DbContext);
-            scope.Allow(id, nameof(PurchaseRequest.Ordered));
+            scope.Allow(typeof(PurchaseRequest), id, nameof(PurchaseRequest.Ordered));
             AssertLocked(Record.Exception(() => os.CommitChanges()));
         }
         Assert.Equal((50m, false), (Saved(id).Amount, Saved(id).Ordered));

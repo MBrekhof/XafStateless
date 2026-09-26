@@ -50,7 +50,7 @@ internal sealed class RuntimeScope : IDisposable
 {
     static readonly AsyncLocal<RuntimeScope?> current = new();
     readonly RuntimeScope? previous;
-    readonly HashSet<(Guid, string)> allowed = [];
+    readonly HashSet<(Type, Guid, string)> allowed = [];
     volatile bool disposed;
 
     RuntimeScope(DbContext context, RuntimeScope? previous) => (Context, this.previous) = (context, previous);
@@ -66,11 +66,12 @@ internal sealed class RuntimeScope : IDisposable
 
     public static RuntimeScope Open(DbContext context) => current.Value = new RuntimeScope(context, current.Value);
 
-    /// <summary>Exempts exactly this subject member from StateLockGuard for this scope's saves (one pair per SetField).</summary>
-    public void Allow(Guid subjectId, string member) { lock (allowed) allowed.Add((subjectId, member)); }
+    /// <summary>Exempts exactly this subject member from StateLockGuard for this scope's saves (one per SetField). The subject
+    /// is identified like the guard does: its EF entity CLR type and ID, since subject types in different tables may share IDs.</summary>
+    public void Allow(Type subjectType, Guid subjectId, string member) { lock (allowed) allowed.Add((subjectType, subjectId, member)); }
 
-    /// <summary>True when <see cref="Allow"/> recorded this pair and the scope is still open.</summary>
-    public bool IsAllowed(Guid subjectId, string member) { lock (allowed) return !disposed && allowed.Contains((subjectId, member)); }
+    /// <summary>True when <see cref="Allow"/> recorded this (type, subject, member) and the scope is still open.</summary>
+    public bool IsAllowed(Type subjectType, Guid subjectId, string member) { lock (allowed) return !disposed && allowed.Contains((subjectType, subjectId, member)); }
 
     public void Dispose()
     {
