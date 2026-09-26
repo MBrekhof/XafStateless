@@ -21,10 +21,6 @@ The trial integration (plan `docs/superpowers/plans/2026-09-26-bpgdemo-trial.md`
   bpg WF-007 (hook bypass), JOBS-001 (job plumbing), AUTO-003 (outbox Name, unverified), CARD-1825 (tabs, second sighting).
 - Tests: Engine 37, Module 95.
 
-## Needs your action
-
-1. **History still contains the old project names.** Current files are clean; earlier commits (plan, README, one demo comment) still mention them. Rewriting history was not done (destructive). Decide whether that matters for this private repo.
-
 ## Decisions taken on your behalf (highlights)
 
 The full list with costs is in the final session message. The ones most worth a second look:
