@@ -5,7 +5,7 @@ namespace XafStateless.Module.BusinessObjects;
 
 public enum NotificationState { Pending, Sent, Failed }
 
-[NavigationItem("Workflow")]
+[NavigationItem("Workflow"), ImageName("BO_Notifications")]
 public class WorkflowNotification : BaseObject
 {
     public virtual string Role { get; set; } = "";

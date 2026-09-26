@@ -64,7 +64,19 @@ public class DesignerJourneyTests : PageTest
         await Pick(designer, "Kind", "Task");
         await Pick(designer, "Task Role", "Approvers");
         await Shot(designer, "02a-state-finance");
-        await SaveAndCloseTab(designer);
+
+        // 2b. A Notify effect on the finance state; every effect editor is found by role and accessible name (XSM-019).
+        await Button(designer, "New").ClickAsync();   // the Effects group's New: the only one on the state view
+        await Expect(SelectedViewTab(designer)).ToContainTextAsync("Workflow Effect");   // the effect opens in its own tab
+        await Shot(designer, "02b-effect-new");   // also shows the Workflow navigation images (XSM-020)
+        await Pick(designer, "Kind", "Set field");   // XAF's sentence-case enum caption for EffectKind.SetField (XSM-020)
+        await Pick(designer, "Kind", "Notify");
+        await Pick(designer, "Target*", "Approvers");
+        await designer.GetByRole(AriaRole.Spinbutton, new() { Name = "Order", Exact = true }).FillAsync("0");
+        await designer.GetByRole(AriaRole.Textbox, new() { Name = "Value", Exact = true }).FillAsync("Finance: please check {Title}");
+        await Shot(designer, "02c-effect-notify");
+        await SaveAndCloseTab(designer, "Finance");
+        await CloseSavedTab(designer);   // saving the effect from its own tab saved the new finance state with it
 
         await designer.GetByRole(AriaRole.Tab, new() { Name = "Transitions", Exact = true }).ClickAsync();
         await Row(designer, "approval", "Approve").GetByRole(AriaRole.Gridcell, new() { Name = "Approve", Exact = true }).ClickAsync();
@@ -182,13 +194,21 @@ public class DesignerJourneyTests : PageTest
         await Expect(box).ToHaveValueAsync(option);
     }
 
-    /// <summary>Save the nested object's tab, then close it; focus returns to the owning definition.</summary>
-    async Task SaveAndCloseTab(IPage p)
+    /// <summary>Close a tab that has nothing left to save; focus returns to the owning definition.</summary>
+    async Task CloseSavedTab(IPage p)
+    {
+        await Expect(Button(p, "Save")).ToBeDisabledAsync();
+        await SelectedViewTab(p).Locator(".xaf-close-tab-button:visible").ClickAsync();
+        await Expect(SelectedViewTab(p)).ToContainTextAsync("purchase-request");
+    }
+
+    /// <summary>Save the nested object's tab, then close it; focus returns to its owner (by default the definition).</summary>
+    async Task SaveAndCloseTab(IPage p, string owner = "purchase-request")
     {
         await Button(p, "Save").ClickAsync();
         await Expect(Button(p, "Save")).ToBeDisabledAsync();   // saved: nothing pending
         await SelectedViewTab(p).Locator(".xaf-close-tab-button:visible").ClickAsync();
-        await Expect(SelectedViewTab(p)).ToContainTextAsync("purchase-request");
+        await Expect(SelectedViewTab(p)).ToContainTextAsync(owner);
     }
 
     /// <summary>Run a choice action: one item runs on click, several drop down.</summary>

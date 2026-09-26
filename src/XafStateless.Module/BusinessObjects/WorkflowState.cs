@@ -15,6 +15,7 @@ namespace XafStateless.Module.BusinessObjects;
     Criteria = "Kind != ##Enum#XafStateless.Engine.StateKind,Task#", Visibility = ViewItemVisibility.Hide)]
 [Appearance("WorkflowState.WaitMinutes", AppearanceItemType = "ViewItem", TargetItems = nameof(WaitMinutes), Context = "DetailView",
     Criteria = "Kind != ##Enum#XafStateless.Engine.StateKind,Wait#", Visibility = ViewItemVisibility.Hide)]
+[ImageName("BO_State")]
 public class WorkflowState : BaseObject, IStringLookupSource
 {
     public virtual WorkflowDefinition? Definition { get; set; }

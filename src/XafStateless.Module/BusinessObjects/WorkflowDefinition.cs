@@ -13,7 +13,7 @@ namespace XafStateless.Module.BusinessObjects;
 
 public enum DefinitionState { Draft, Published, Retired }
 
-[NavigationItem("Workflow")]
+[NavigationItem("Workflow"), ImageName("BO_WorkflowDefinition")]   // built-in DevExpress.Images names (XSM-020)
 [DefaultProperty(nameof(Name))]
 public class WorkflowDefinition : BaseObject, IStringLookupSource
 {

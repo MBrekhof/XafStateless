@@ -1,9 +1,10 @@
+using DevExpress.Persistent.Base;
 using System.ComponentModel;
 using DevExpress.Persistent.BaseImpl.EF;
 
 namespace XafStateless.Module.BusinessObjects;
 
-[DefaultProperty(nameof(StateCaption))]   // a subject's Workflow link shows its current state
+[ImageName("BO_StateMachine"), DefaultProperty(nameof(StateCaption))]   // a subject's Workflow link shows its current state
 public class WorkflowInstance : BaseObject
 {
     public virtual string SubjectType { get; set; } = "";

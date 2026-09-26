@@ -5,7 +5,7 @@ namespace XafStateless.Module.BusinessObjects;
 
 public enum TaskState { Open, Decided, Superseded }
 
-[NavigationItem("Workflow")]
+[NavigationItem("Workflow"), ImageName("BO_Task")]
 public class WorkflowTask : BaseObject
 {
     public virtual WorkflowInstance? Instance { get; set; }
