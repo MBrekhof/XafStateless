@@ -1,0 +1,354 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "XafStateless — workflows as data on XAF",
+    "output": "xafstateless-architecture.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "transition-command",
+        "label": "A transition as a command",
+        "focus": [
+          "users",
+          "ui",
+          "runtime",
+          "engine",
+          "cmdos",
+          "guards",
+          "db"
+        ],
+        "note": "Commit the view, reload by id, run the machine, touch rows, one commit through the save guards."
+      },
+      {
+        "id": "definitions",
+        "label": "Designing a workflow",
+        "focus": [
+          "ui",
+          "defsvc",
+          "engine",
+          "store",
+          "db"
+        ],
+        "note": "Drafts are validated by the engine and published as immutable, versioned definitions."
+      },
+      {
+        "id": "background",
+        "label": "Timers and notifications",
+        "focus": [
+          "timer",
+          "runtime",
+          "dispatcher",
+          "db",
+          "mail"
+        ],
+        "note": "The host fires due Wait states and delivers the outbox."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "users",
+      "type": "external",
+      "label": "Designers & approvers",
+      "sublabel": "browser",
+      "pos": [
+        40,
+        240
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "ui",
+      "type": "frontend",
+      "label": "XAF Blazor UI",
+      "sublabel": "actions · lookups · diagram",
+      "pos": [
+        250,
+        240
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "defsvc",
+      "type": "backend",
+      "label": "DefinitionService",
+      "sublabel": "validate · publish · dry run",
+      "pos": [
+        250,
+        90
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "engine",
+      "type": "backend",
+      "label": "Engine",
+      "sublabel": "validator · Stateless · Mermaid",
+      "pos": [
+        480,
+        90
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "tag": "pure .NET"
+    },
+    {
+      "id": "store",
+      "type": "backend",
+      "label": "DefinitionStore",
+      "sublabel": "committed snapshots",
+      "pos": [
+        720,
+        90
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "runtime",
+      "type": "backend",
+      "label": "WorkflowRuntime",
+      "sublabel": "Start · Fire · Decide · timers",
+      "pos": [
+        480,
+        240
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "cmdos",
+      "type": "backend",
+      "label": "Command object space",
+      "sublabel": "non-secured · RuntimeScope",
+      "pos": [
+        720,
+        240
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "guards",
+      "type": "security",
+      "label": "Save guards",
+      "sublabel": "definition · state lock",
+      "pos": [
+        950,
+        240
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "tag": "SaveChanges"
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "SQL Server",
+      "sublabel": "workflow rows + outbox",
+      "pos": [
+        950,
+        400
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "timer",
+      "type": "backend",
+      "label": "Timer service",
+      "sublabel": "host · every 30 s",
+      "pos": [
+        480,
+        400
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "dispatcher",
+      "type": "backend",
+      "label": "Notification dispatcher",
+      "sublabel": "host · outbox reader",
+      "pos": [
+        720,
+        400
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "mail",
+      "type": "external",
+      "label": "Mail / log sink",
+      "sublabel": "host-provided",
+      "pos": [
+        720,
+        540
+      ],
+      "size": [
+        170,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "XafStateless module",
+      "wraps": [
+        "defsvc",
+        "engine",
+        "store",
+        "runtime",
+        "cmdos",
+        "guards"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Host application",
+      "wraps": [
+        "timer",
+        "dispatcher"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "users-ui",
+      "from": "users",
+      "to": "ui",
+      "label": "HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "ui-runtime",
+      "from": "ui",
+      "to": "runtime",
+      "label": "command",
+      "variant": "emphasis"
+    },
+    {
+      "id": "runtime-cmdos",
+      "from": "runtime",
+      "to": "cmdos",
+      "label": "reload",
+      "variant": "emphasis"
+    },
+    {
+      "id": "cmdos-guards",
+      "from": "cmdos",
+      "to": "guards",
+      "label": "commit",
+      "variant": "emphasis"
+    },
+    {
+      "id": "guards-db",
+      "from": "guards",
+      "to": "db",
+      "label": "SQL",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "id": "runtime-engine",
+      "from": "runtime",
+      "to": "engine",
+      "label": "run machine"
+    },
+    {
+      "id": "ui-defsvc",
+      "from": "ui",
+      "to": "defsvc",
+      "label": "publish"
+    },
+    {
+      "id": "defsvc-engine",
+      "from": "defsvc",
+      "to": "engine",
+      "label": "validate"
+    },
+    {
+      "id": "engine-store",
+      "from": "store",
+      "to": "engine",
+      "label": "pinned def"
+    },
+    {
+      "id": "timer-runtime",
+      "from": "timer",
+      "to": "runtime",
+      "label": "due timers",
+      "variant": "dashed",
+      "labelDy": -24
+    },
+    {
+      "id": "dispatcher-db",
+      "from": "dispatcher",
+      "to": "db",
+      "label": "outbox",
+      "variant": "dashed"
+    },
+    {
+      "id": "dispatcher-mail",
+      "from": "dispatcher",
+      "to": "mail",
+      "label": "deliver",
+      "variant": "dashed",
+      "labelDy": 24
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Engine",
+      "items": [
+        "Workflows are data, validated before publish",
+        "Runs on Stateless; diagram from the same definition"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Runtime",
+      "items": [
+        "Each transition is one command and one commit",
+        "Lost races lose loudly and retry from a reload"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Guards",
+      "items": [
+        "Published definitions are immutable",
+        "Locked fields refused at save, not only in the UI"
+      ]
+    }
+  ]
+}
