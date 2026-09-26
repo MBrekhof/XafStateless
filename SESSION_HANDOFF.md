@@ -2,7 +2,7 @@
 
 ## Where things stand
 
-Branch `poc/xafstateless` (pushed; not merged to `master`). Plan: `docs/superpowers/plans/2026-09-25-xafstateless.md`.
+`master` and `poc/xafstateless` both on GitHub at the same commit. Plan: `docs/superpowers/plans/2026-09-25-xafstateless.md`.
 
 - Tasks 1–9 of the plan are implemented, task-reviewed and fixed (cards XSM-001…XSM-009, XSM-011, XSM-012).
 - A final whole-branch review ran; its Critical/Important findings were fixed in `5152782` and re-reviewed clean.
