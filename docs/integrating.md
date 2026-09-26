@@ -218,6 +218,12 @@ PermissionPolicyRole GrantRole(string name, Action<PermissionPolicyRole> grant) 
   - Name the role **before** the call. It throws `ArgumentException` for an unnamed role.
 - **The designer actions check role names.** New version, Validate, Publish and Dry run show only to users holding a
   role named `Administrators` or `WorkflowDesigners`. Use exactly those names.
+- **The designer validates as it edits.** The definition view validates what is on screen, saved or not, on every
+  change: a state with a problem gets a red row and a Problem text in the States list and a red box in the diagram
+  (problems of the definition as a whole are listed under the diagram), and
+  Publish and Dry run stay disabled (their tooltip names the first problem) until it validates. Validate shows the
+  result without saving. The service validates again on Publish and Dry run. Edits saved in a separate state or
+  transition tab reach the definition view when it refreshes (its Refresh action).
 - **Start and Transition need Write on the subject.** Reading a subject is not enough to start its workflow or to fire
   one of its manual transitions, even one without a required role: the runtime checks Write on the subject through the
   caller's security strategy (`IsGrantedExtensions.CanWrite`) and refuses with "changing the workflow of this
@@ -265,7 +271,8 @@ public class PurchaseRequest : BaseObject, IWorkflowSubject
   API writes too: changing a locked field or deleting a subject whose workflow is in a non-Final state returns 400
   with the guard's message.
 - `Workflow` is the link to the running instance. The runtime owns it and the guard refuses user changes. Its display
-  text is the current state's caption, so list views can show and filter on it.
+  text is the current state's caption, so list views can show and filter on it. Opening it shows the instance with the
+  diagram of the version it runs on, its current state highlighted.
 - On a subject's detail view, the module adds the **Start workflow** action (Published definitions whose target type is
   this class) and the **Transition** action (the manual transitions the user may fire now). Both are hidden from a user
   without Write on the subject.
@@ -274,7 +281,8 @@ public class PurchaseRequest : BaseObject, IWorkflowSubject
   members: string, number, bool, DateTime, Guid and enum. `ID`, `Workflow`, the lock field, references and collections
   are excluded.
 
-A designer then creates a definition with the subject's full class name as **Target Type Name**, and publishes it.
+A designer then creates a definition, picks the subject class in **Target Type Name** (the list offers every persistent,
+non-abstract class implementing `IWorkflowSubject`, by caption; the full class name is stored), and publishes it.
 
 ## 8. Timer (Wait states)
 

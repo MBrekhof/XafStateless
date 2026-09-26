@@ -6,7 +6,7 @@
 
 - Tasks 1–9 of the plan are implemented, task-reviewed and fixed (cards XSM-001…XSM-009, XSM-011, XSM-012).
 - A final whole-branch review ran; its Critical/Important findings were fixed in `5152782` and re-reviewed clean.
-- Tests: `dotnet test XafStateless.slnx` → Engine 40, Module 109, all green. E2E (`tests/XafStateless.E2E`, needs the demo running on a freshly seeded database — see README) passed 1/1.
+- Tests: `dotnet test XafStateless.slnx` → Engine 52, Module 116, all green. E2E (`tests/XafStateless.E2E`, needs the demo running on a freshly seeded database — see README) passes 2/2.
 - Docs: `README.md` (pitch, comparison with XAF StateMachine, screenshots, how to run), `docs/integrating.md` (host contract + limits), architecture diagram `docs/architecture/xafstateless-architecture.html`.
 
 ## BPGDemo trial — done
@@ -31,6 +31,25 @@ The trial integration (plan `docs/superpowers/plans/2026-09-26-bpgdemo-trial.md`
 - E2E runs against a separate catalog so `XafStatelessDemo` stays untouched: pass
   `--ConnectionStrings:ConnectionString=...Initial Catalog=XafStatelessE2E` to both demo exe calls (seed and run).
   One E2E run failed at opening the finance task while the machine was busy with a Codex review; reruns passed.
+  (That failure turned out to be XSM-029, below.)
+
+## Designer round (2026-09-26/27, from the user's demo feedback; card lanes are on the board)
+
+- XSM-022 `058bb82`: Target Type Name picked from the classes implementing IWorkflowSubject; the transition's Trigger
+  reads "Action name". XSM-023 `058bb82`: diagram zoom, fit and portrait/landscape.
+- XSM-024 `072b724`: the validator names the cause (e.g. "no state is Final") instead of symptoms, as findings tagged
+  with their state.
+- XSM-025 `3a524ff`: the Target Type list shows class captions, stores the full name.
+- XSM-027 + XSM-028 `ad31fbb`: validation while editing (state problems as red rows and red diagram states, the rest as
+  messages under the diagram; Publish and Dry run disabled until valid; Validate without saving); diagram colored by step type with a legend; a request's instance view
+  shows its diagram with the current state highlighted.
+- XSM-026 (spike): design note `docs/ai-assist.md`: AI drafts and fixes that the validator gates, never publishes.
+- **Open: XSM-029** (high priority). Decide once executed Reject when the E2E clicked Approve, about 1 run in 8,
+  only when clicking within milliseconds of the menu opening. The E2E waits 300 ms now and has passed every run since;
+  whether a person can hit it is unproven. The card lists the evidence and the next step (a minimal XAF repro).
+- Codex: the daemon works again since codex-cli 0.157.1 (`--no-daemon` no longer needed). Its sandbox sometimes cannot
+  read files; the review script then embeds the diff in the prompt. The plugin's stop-time review gate is still off for
+  this repo; turning it back on is your call.
 
 ## BPG decision (2026-09-26)
 

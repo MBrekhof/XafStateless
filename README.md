@@ -8,7 +8,11 @@ publish**, and running work stays on the version it started on. The published de
 state**, in the UI and again at save. The **diagram is generated from the same definition** that runs, so the picture
 cannot drift from the behaviour.
 
-![Designer publishing v2: refused while the new 'finance' state has no way out](docs/screenshots/publish-refused-no-way-out.png)
+![Designer editing v2: the new 'finance' state has no way out, so its row and its diagram state are red and Publish is disabled](docs/screenshots/designer-live-validation.png)
+
+The designer validates as you edit: a problem with a state shows on that state, in red in the States list and in the
+diagram; problems of the definition as a whole (for example "no state is Final") are listed under the diagram. Publish
+and Dry run stay disabled until everything is fixed.
 
 ## Compared with XAF's StateMachine module
 
@@ -21,9 +25,9 @@ XAF's built-in StateMachine module was checked against dxdocs pages 113713, 1137
 | Waiting / timers | None | The Wait step, fired by a per-minute runner |
 | Human tasks | None | The Task step, whose outcomes are the outgoing triggers |
 | Safe editing | Edits apply live to running objects | Draft → Published → Retired; running work stays pinned to its version |
-| Validation | None | At publish: reachability, a way out, no stuck wait, no automatic loop, and criteria, role and field checks |
+| Validation | None | While editing and again at publish: reachability, a way out, no stuck wait, no automatic loop, and criteria, role and field checks; a problem with a state is marked on that state, the rest are listed as messages |
 | Lock fields per state | Yes: `StateAppearance`, UI only | Yes: locked in the UI and refused at save |
-| Diagram | None | Mermaid, generated from the definition that runs |
+| Diagram | None | Mermaid, generated from the definition that runs: colored by step type, problems in red, a request's current state highlighted |
 
 ## Architecture
 
@@ -51,6 +55,8 @@ and dark themes.
 | The diagram of v2, after the designer added the Finance step | A human task: the outcomes are the state's outgoing triggers |
 | ![A locked field refused at save](docs/screenshots/field-lock-refused.png) | ![A request after its timed wait](docs/screenshots/request-laptop-ordered.png) |
 | Amount is locked in Approval: an edit that races the transition is refused at save | A 5,000 request went through the Cooling-off wait by itself; the Set field step checked Ordered |
+| ![A request's workflow with its current state highlighted](docs/screenshots/instance-diagram-current-state.png) | |
+| A request's workflow, drawn from the version it runs on, current state highlighted | |
 
 More screenshots are in [`docs/screenshots/`](docs/screenshots/).
 
@@ -63,13 +69,15 @@ Proof of concept, feature-complete for the demo:
   who started the workflow);
 - per-state field locks;
 - the permission matrix;
-- the diagram.
+- the designer: Target Type picked from the workflow subject classes, validation while editing (problem states in red in
+  the list and the diagram, Publish and Dry run gated), the diagram with zoom, portrait/landscape and colors by step type.
 
 Coverage:
 - Engine and module: unit and LocalDB tests (`dotnet test XafStateless.slnx`).
 - The designer journey: one end-to-end Playwright test against the running demo (`tests/XafStateless.E2E`). It creates
-  v2 with a new Finance step, is refused at publish until the step has a way out, and shows that a v2 request passes
-  Finance while a v1 request started earlier does not.
+  v2 with a new Finance step, sees Publish disabled and the step marked until it has a way out, and shows that a v2
+  request passes Finance while a v1 request started earlier does not. A second test picks the target type of a new
+  definition.
 
 Host trial: the module was added to the BPGDemo skeleton by following [docs/integrating.md](docs/integrating.md), with no
 module change; results and findings are in [docs/host-trial.md](docs/host-trial.md). There is no NuGet package yet. Open
