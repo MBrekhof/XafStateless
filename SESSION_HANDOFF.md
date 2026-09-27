@@ -44,9 +44,9 @@ The trial integration (plan `docs/superpowers/plans/2026-09-26-bpgdemo-trial.md`
   messages under the diagram; Publish and Dry run disabled until valid; Validate without saving); diagram colored by step type with a legend; a request's instance view
   shows its diagram with the current state highlighted.
 - XSM-026 (spike): design note `docs/ai-assist.md`: AI drafts and fixes that the validator gates, never publishes.
-- **Open: XSM-029** (high priority). Decide once executed Reject when the E2E clicked Approve, about 1 run in 8,
-  only when clicking within milliseconds of the menu opening. The E2E waits 300 ms now and has passed every run since;
-  whether a person can hit it is unproven. The card lists the evidence and the next step (a minimal XAF repro).
+- XSM-029 (parked, low priority): Decide once executed Reject when the E2E clicked Approve, about 1 run in 8, only
+  when clicking within milliseconds of the menu opening. Judged an automation timing effect, not a user-facing bug
+  (agreed 2026-09-27); the E2E waits 300 ms. Reopen if a user reports "approved, but it got rejected".
 - Codex: the daemon works again since codex-cli 0.157.1 (`--no-daemon` no longer needed). Its sandbox sometimes cannot
   read files; the review script then embeds the diff in the prompt. The plugin's stop-time review gate is still off for
   this repo; turning it back on is your call.
