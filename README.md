@@ -8,7 +8,10 @@ publish**, and running work stays on the version it started on. The published de
 state**, in the UI and again at save. The **diagram is generated from the same definition** that runs, so the picture
 cannot drift from the behaviour.
 
-![Designer editing v2: the new 'finance' state has no way out, so its row and its diagram state are red and Publish is disabled](docs/screenshots/designer-live-validation.png)
+![The published v2 of the purchase-request workflow, drawn from its definition and colored by step type](docs/screenshots/diagram-v2-landscape.png)
+
+*The demo's purchase-request workflow (v2), drawn from the same definition that runs: Draft is a manual step, Approval
+and Finance are human tasks, Amount check decides automatically, Cooling-off waits a minute before large orders.*
 
 The designer validates as you edit: a problem with a state shows on that state, in red in the States list and in the
 diagram; problems of the definition as a whole (for example "no state is Final") are listed under the diagram. Publish
@@ -51,8 +54,8 @@ and dark themes.
 
 | | |
 |---|---|
-| ![The v2 diagram with the new Finance step](docs/screenshots/diagram-v2-with-finance.png) | ![An approver deciding a task](docs/screenshots/task-decide-action.png) |
-| The diagram of v2, after the designer added the Finance step | A human task: the outcomes are the state's outgoing triggers |
+| ![Designer editing v2: the new 'finance' state has no way out, so its row and its diagram state are red and Publish is disabled](docs/screenshots/designer-live-validation.png) | ![An approver deciding a task](docs/screenshots/task-decide-action.png) |
+| While editing v2: Finance has no way out yet, so it is red in the list and the diagram, and Publish is disabled | A human task: the outcomes are the state's outgoing triggers |
 | ![A locked field refused at save](docs/screenshots/field-lock-refused.png) | ![A request after its timed wait](docs/screenshots/request-laptop-ordered.png) |
 | Amount is locked in Approval: an edit that races the transition is refused at save | A 5,000 request went through the Cooling-off wait by itself; the Set field step checked Ordered |
 | ![A request's workflow with its current state highlighted](docs/screenshots/instance-diagram-current-state.png) | |

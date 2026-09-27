@@ -140,6 +140,7 @@ public class DesignerJourneyTests : PageTest
         await diagram.ScreenshotAsync(new() { Path = ShotPath("04b-diagram-landscape-zoomed"), Animations = ScreenshotAnimations.Disabled });
         await diagram.GetByRole(AriaRole.Button, new() { Name = "Fit to width" }).ClickAsync();
         await Until("fit restores the width", async () => Math.Abs((await Box()).Width - fitted.Width) < 2);
+        await diagram.ScreenshotAsync(new() { Path = ShotPath("04c-diagram-landscape"), Animations = ScreenshotAnimations.Disabled });   // README picture
         await diagram.GetByRole(AriaRole.Button, new() { Name = "Show top to bottom" }).ClickAsync();
         await Expect(diagram.GetByRole(AriaRole.Button, new() { Name = "Show left to right" })).ToBeVisibleAsync();
         await Until("portrait is drawn again", async () => { var b = await Box(); return Math.Abs(b.Width / b.Height - portrait.Width / portrait.Height) < 0.05; });
