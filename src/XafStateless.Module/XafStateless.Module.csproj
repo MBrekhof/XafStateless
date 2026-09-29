@@ -1,14 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <Description>XAF module for XafStateless: workflow definitions as versioned data, runtime, tasks, notifications outbox, guards and role grants (EF Core, SQL Server).</Description>
+  </PropertyGroup>
+
   <ItemGroup>
-    <PackageReference Include="DevExpress.ExpressApp" Version="26.1.4" />
-    <PackageReference Include="DevExpress.ExpressApp.EFCore" Version="26.1.4" />
-    <PackageReference Include="DevExpress.Persistent.BaseImpl.EFCore" Version="26.1.4" />
-    <PackageReference Include="DevExpress.ExpressApp.ConditionalAppearance" Version="26.1.4" />
-    <PackageReference Include="DevExpress.ExpressApp.Validation" Version="26.1.4" />
+    <PackageReference Include="DevExpress.ExpressApp" Version="$(DevExpressPackageRange)" />
+    <PackageReference Include="DevExpress.ExpressApp.EFCore" Version="$(DevExpressPackageRange)" />
+    <PackageReference Include="DevExpress.Persistent.BaseImpl.EFCore" Version="$(DevExpressPackageRange)" />
+    <PackageReference Include="DevExpress.ExpressApp.ConditionalAppearance" Version="$(DevExpressPackageRange)" />
+    <PackageReference Include="DevExpress.ExpressApp.Validation" Version="$(DevExpressPackageRange)" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.2" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.10" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="10.0.10" />
+    <!-- Kept on purpose: DevExpress.ExpressApp.EFCore depends on InMemory/Proxies/Design >= 8.0.28, so these direct
+         references lift a consumer's whole EF Core family to 10.0.10 instead of leaving 8.0.28 next to EF Core 10. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.10" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10">
       <PrivateAssets>all</PrivateAssets>

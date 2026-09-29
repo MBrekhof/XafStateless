@@ -10,12 +10,20 @@ The host needs:
 
 ## 1. References
 
-| Host project | Reference |
+| Host project | Package |
 |---|---|
-| The platform-agnostic module (the one holding the DbContext and business classes) | `src/XafStateless.Module/XafStateless.Module.csproj` |
-| The Blazor server project | `src/XafStateless.Blazor/XafStateless.Blazor.csproj` (it brings the Module in) |
+| The platform-agnostic module (the one holding the DbContext and business classes) | `XafStateless.Module` (brings `XafStateless.Engine`) |
+| The Blazor server project | `XafStateless.Blazor` (brings the Module in) |
 
-For now these are `ProjectReference`s to this repository. There is no NuGet package yet.
+The packages are on the private GitHub Packages feed `https://nuget.pkg.github.com/MBrekhof/index.json` (add it to the
+host's `nuget.config` with a token that can read packages). They accept DevExpress 26.1.4 and any later 26.1 patch, never
+26.2. The Module references EF Core InMemory, Proxies and Relational 10.0.10 on purpose: DevExpress's EF Core package
+only asks for 8.0.28 or higher, and these keep the host's whole EF Core family on 10.0.10. This repository's demo and
+tests use `ProjectReference`s to the same projects.
+
+**Schema.** The package ships no migration. The seven workflow tables come from XAF's schema update, so after adding the
+package (or moving to a new version) run the host once with its database update switch (BPGDemo-based apps:
+`--updateDatabase`); outside a debugger a schema mismatch otherwise stops the app at startup.
 
 ## 2. Modules
 
