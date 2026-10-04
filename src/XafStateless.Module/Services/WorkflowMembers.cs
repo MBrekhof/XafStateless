@@ -20,4 +20,18 @@ public static class WorkflowMembers
         t = Nullable.GetUnderlyingType(t) ?? t;
         return t == typeof(Guid) || Type.GetTypeCode(t) is >= TypeCode.Boolean and <= TypeCode.DateTime or TypeCode.String;
     }
+
+    /// <summary>The supported members an Increment effect may count on: whole-number or decimal, nullable or not.</summary>
+    public static IReadOnlyList<IMemberInfo> Counters(ITypeInfo target) => Supported(target).Where(m => IsCounter(m.MemberType)).ToList();
+
+    /// <summary>Integral or decimal; not an enum (its TypeCode is its underlying integer's), not float/double (decimal arithmetic
+    /// would round them: 12345678f + 1 came back as 12345681).</summary>
+    public static bool IsCounter(Type t)
+    {
+        t = Nullable.GetUnderlyingType(t) ?? t;
+        return !t.IsEnum && (IsIntegral(t) || t == typeof(decimal));
+    }
+
+    /// <summary>A member that takes whole steps only.</summary>
+    public static bool IsIntegral(Type t) => Type.GetTypeCode(Nullable.GetUnderlyingType(t) ?? t) is >= TypeCode.SByte and <= TypeCode.UInt64;
 }

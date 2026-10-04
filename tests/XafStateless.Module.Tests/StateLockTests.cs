@@ -96,7 +96,7 @@ public class StateLockTests : IClassFixture<TestDb>
         var approval = d.States.Single(s => s.Key == "approval");
         Assert.Equal("Amount;Nope", approval.LockedMembers);
         Assert.Equal(["Amount", "Nope"], DefinitionMapper.ToDef(d).State("approval").LockedMembers);
-        Assert.Equal(["Amount", "Ordered", "Title"], ((IStringLookupSource)approval).LookupValues(nameof(WorkflowState.LockedMembers), () => []).Order());
+        Assert.Equal(["Amount", "Ordered", "Revisions", "Title"], ((IStringLookupSource)approval).LookupValues(nameof(WorkflowState.LockedMembers), () => []).Order());
         os.CommitChanges();
         var r = new DefinitionService(new DefinitionStore()).Publish(os, d, "tester", WorkflowRoleCatalog.Names(os));
         Assert.False(r.Ok);

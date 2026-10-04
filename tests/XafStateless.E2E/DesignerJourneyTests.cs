@@ -70,6 +70,8 @@ public class DesignerJourneyTests : PageTest
         await Expect(SelectedViewTab(designer)).ToContainTextAsync("Workflow Effect");   // the effect opens in its own tab
         await Shot(designer, "02b-effect-new");   // also shows the Workflow navigation images (XSM-020)
         await Pick(designer, "Kind", "Set field");   // XAF's sentence-case enum caption for EffectKind.SetField (XSM-020)
+        await Pick(designer, "Kind", "Increment");   // XSM-031: the counter step renders, and its Target offers the numeric members
+        await Pick(designer, "Target*", "Amount");
         await Pick(designer, "Kind", "Notify");
         await Pick(designer, "Target*", "Approvers");
         await designer.GetByRole(AriaRole.Spinbutton, new() { Name = "Order", Exact = true }).FillAsync("0");

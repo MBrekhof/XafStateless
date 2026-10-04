@@ -285,9 +285,12 @@ public class PurchaseRequest : BaseObject, IWorkflowSubject
   this class) and the **Transition** action (the manual transitions the user may fire now). Both are hidden from a user
   without Write on the subject.
 - A subject cannot be deleted while its workflow is in a non-Final state (see the guards in step 3).
-- The members that effects (Set field) and field locks can use are the public, persistent, writable, browsable scalar
-  members: string, number, bool, DateTime, Guid and enum. `ID`, `Workflow`, the lock field, references and collections
-  are excluded.
+- The members that effects (Set field, Increment) and field locks can use are the public, persistent, writable, browsable
+  scalar members: string, number, bool, DateTime, Guid and enum. `ID`, `Workflow`, the lock field, references and
+  collections are excluded. Increment counts on whole-number and decimal members only (null counts as 0; the step is the
+  effect's Value, 1 when empty), so a Decision after it can limit attempts: `rework` increments `Attempts`, and the
+  Decision's first branch `Attempts >= 3` leads to a Final state. A result outside the member's range refuses the
+  command and commits nothing.
 
 A designer then creates a definition, picks the subject class in **Target Type Name** (the list offers every persistent,
 non-abstract class implementing `IWorkflowSubject`, by caption; the full class name is stored), and publishes it.

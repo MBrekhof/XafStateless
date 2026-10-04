@@ -68,8 +68,8 @@ More screenshots are in [`docs/screenshots/`](docs/screenshots/).
 Proof of concept, feature-complete for the demo:
 - the engine, validator, dry run and Mermaid export;
 - versioned definitions with publish-time validation;
-- the runtime, with Task, Wait, Decision, Notify and Set field steps; Notify addresses a role or the requester (the user
-  who started the workflow);
+- the runtime, with Task, Wait, Decision, Notify, Set field and Increment steps; Notify addresses a role or the requester
+  (the user who started the workflow); Increment counts attempts for a Decision to limit;
 - per-state field locks;
 - the permission matrix;
 - the designer: Target Type picked from the workflow subject classes, validation while editing (problem states in red in

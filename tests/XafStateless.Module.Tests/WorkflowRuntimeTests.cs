@@ -74,7 +74,8 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
                 OnEntry: [new(EffectKind.Notify, "Approvers", "Please approve {Title}")]),
             new("decide-amount", "Amount check", StateKind.Decision),
             new("wait-cooling", "Cooling-off", StateKind.Wait, WaitMinutes: 1),
-            new("ordered", "Ordered", StateKind.Final, OnEntry: [new(EffectKind.SetField, "Ordered", "true"), new(EffectKind.Notify, "Approvers", "Ordered: {Title}")]),
+            // Increment Revisions (null -> 1): a retried attempt must leave exactly one increment (XSM-031).
+            new("ordered", "Ordered", StateKind.Final, OnEntry: [new(EffectKind.SetField, "Ordered", "true"), new(EffectKind.Notify, "Approvers", "Ordered: {Title}"), new(EffectKind.Increment, "Revisions", "")]),
             new("rejected", "Rejected", StateKind.Final),
         ],
         [
@@ -392,6 +393,73 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
         Assert.Equal([1, 2], attempts);
         Assert.Equal("ordered", Instance(id).StateKey);
         Assert.Single(Notifications(inst), n => n.Body.StartsWith("Ordered:"));
+        Assert.Equal(1, Request(id).Revisions);   // the first attempt's increment was rolled back with its object space
+    }
+
+    /// <summary>theory -Fail-> count (Decision; Increment <paramref name="member"/> by <paramref name="step"/>) -Limit [criteria]-> failed / -Retry-> theory; theory -Pass-> passed.
+    /// theory locks the counter: the runtime's own increment is exempt (XSM-031).</summary>
+    static WorkflowDef Counting(string name, string member, string step, string limit) => new(name, 1, "theory",
+        [
+            new("theory", "Theory", StateKind.Manual, Locked: [member]),
+            new("count", "Count", StateKind.Decision, OnEntry: [new(EffectKind.Increment, member, step)]),
+            new("failed", "Failed", StateKind.Final),
+            new("passed", "Passed", StateKind.Final),
+        ],
+        [
+            new("theory", "Fail", "count"),
+            new("theory", "Pass", "passed"),
+            new("count", "Limit", "failed", Criteria: limit, Order: 0),
+            new("count", "Retry", "theory", Order: 1),
+        ]);
+
+    Guid StartCounting(WorkflowDef def, decimal amount = 0, int? revisions = null)
+    {
+        Publish(def);
+        var id = NewRequest(amount);
+        if (revisions != null)
+        {
+            using var os = db.NewObjectSpace();
+            os.GetObjectByKey<PurchaseRequest>(id).Revisions = revisions;
+            os.CommitChanges();
+        }
+        Ok(rt.Start(Alice(), typeof(PurchaseRequest), id, def.Name));
+        return id;
+    }
+
+    [Fact] public void Increment_counts_and_decision_sees_it()   // XSM-031: an attempt limit through the workflow itself
+    {
+        var id = StartCounting(Counting(Unique(), "Revisions", "", "Revisions >= 2"));
+        Assert.Null(Request(id).Revisions);
+
+        Ok(rt.Fire(Alice(), typeof(PurchaseRequest), id, "Fail"));
+        Assert.Equal(("theory", 1), (Instance(id).StateKey, Request(id).Revisions));   // null + 1; written while theory locks Revisions
+
+        Ok(rt.Fire(Alice(), typeof(PurchaseRequest), id, "Fail"));
+        Assert.Equal(("failed", 2), (Instance(id).StateKey, Request(id).Revisions));
+    }
+
+    [Fact] public void Increment_steps()
+    {
+        var byHalf = StartCounting(Counting(Unique(), "Amount", "0.5", "Amount >= 100"), amount: 10);
+        Ok(rt.Fire(Alice(), typeof(PurchaseRequest), byHalf, "Fail"));
+        Assert.Equal(10.5m, Request(byHalf).Amount);
+
+        var down = StartCounting(Counting(Unique(), "Revisions", "-1", "Revisions <= 0"), revisions: 3);
+        Ok(rt.Fire(Alice(), typeof(PurchaseRequest), down, "Fail"));
+        Assert.Equal(("theory", 2), (Instance(down).StateKey, Request(down).Revisions));
+    }
+
+    [Theory]
+    [InlineData("1", int.MaxValue)]                               // the conversion back to int overflows
+    [InlineData("79228162514264337593543950335", 1)]              // decimal.MaxValue: the decimal sum itself overflows
+    public void Increment_past_range_is_refused_and_commits_nothing(string step, int revisions)
+    {
+        var id = StartCounting(Counting(Unique(), "Revisions", step, "Revisions < 0"), revisions: revisions);
+
+        var ex = Assert.IsType<UserFriendlyException>(Record.Exception(() => rt.Fire(Alice(), typeof(PurchaseRequest), id, "Fail")));
+
+        Assert.Equal("'Revisions' cannot be incremented past its range", ex.Message);
+        Assert.Equal(("theory", revisions), (Instance(id).StateKey, Request(id).Revisions));
     }
 
     [Fact] public void Large_amount_waits_until_timer()

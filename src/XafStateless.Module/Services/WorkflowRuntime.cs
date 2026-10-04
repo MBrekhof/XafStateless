@@ -249,12 +249,23 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
             switch (effect.Kind)
             {
                 case EffectKind.SetField:
-                    var member = WorkflowMembers.Supported(x.Type).FirstOrDefault(m => m.Name == effect.Target)
-                                 ?? throw new InvalidOperationException($"'{effect.Target}' cannot be set by a workflow");
-                    member.SetValue(x.Subject, XafWorkflowEnvironment.ConvertValue(member.MemberType, effect.Value));
-                    var runtimeScope = x.Scope ?? throw new InvalidOperationException("SetField runs only inside the runtime scope");
-                    // Exempt from StateLockGuard, this member only; keyed by the EF entity type (never a proxy type), as the guard keys it.
-                    runtimeScope.Allow(runtimeScope.Context.Entry(x.Subject).Metadata.ClrType, x.Subject.ID, member.Name);
+                    Write(x, WorkflowMembers.Supported(x.Type).FirstOrDefault(m => m.Name == effect.Target)
+                             ?? throw new InvalidOperationException($"'{effect.Target}' cannot be set by a workflow"),
+                        member => XafWorkflowEnvironment.ConvertValue(member.MemberType, effect.Value));
+                    break;
+                case EffectKind.Increment:
+                    Write(x, WorkflowMembers.Counters(x.Type).FirstOrDefault(m => m.Name == effect.Target)
+                             ?? throw new InvalidOperationException($"'{effect.Target}' cannot be incremented by a workflow"),
+                        member =>
+                        {
+                            XafWorkflowEnvironment.TryStep(effect.Value, out var step);   // validated at publish
+                            try   // the decimal sum itself can overflow, not only the conversion back
+                            {
+                                var sum = (member.GetValue(x.Subject) is { } current ? Convert.ToDecimal(current, CultureInfo.InvariantCulture) : 0) + step;
+                                return Convert.ChangeType(sum, Nullable.GetUnderlyingType(member.MemberType) ?? member.MemberType, CultureInfo.InvariantCulture);
+                            }
+                            catch (OverflowException) { throw new UserFriendlyException($"'{member.Name}' cannot be incremented past its range"); }
+                        });
                     break;
                 case EffectKind.Notify:
                     var toRequester = effect.Target == EffectDef.Requester;
@@ -285,5 +296,14 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
                 instance.DueUtc = now.AddMinutes(state.WaitMinutes ?? 0);
                 break;
         }
+    }
+
+    /// <summary>A SetField or Increment write of one subject member, exempted from StateLockGuard for this member only; keyed by
+    /// the EF entity type (never a proxy type), as the guard keys it.</summary>
+    static void Write(Cmd x, IMemberInfo member, Func<IMemberInfo, object?> value)
+    {
+        var runtimeScope = x.Scope ?? throw new InvalidOperationException("effects run only inside the runtime scope");
+        member.SetValue(x.Subject, value(member));
+        runtimeScope.Allow(runtimeScope.Context.Entry(x.Subject).Metadata.ClrType, x.Subject.ID, member.Name);
     }
 }

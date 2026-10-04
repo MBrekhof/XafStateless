@@ -173,6 +173,44 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         Assert.Equal(DefinitionState.Draft, StateOf(d.ID));
     }
 
+    [Fact] public void Publish_refuses_increment_on_text_member()   // XSM-031
+    {
+        using var os = db.NewObjectSpace();
+        var d = Draft(os, Unique());
+        E(os, d.States.Single(s => s.Key == "ordered"), EffectKind.Increment, "Title", "1");
+        os.CommitChanges();
+        var r = svc.Publish(os, d, "tester", Roles());
+        Assert.False(r.Ok);
+        Assert.Contains(r.Messages, m => m.Contains("effect on 'ordered':") && m.Contains("'Title'"));
+    }
+
+    [Fact] public void Increment_validation()   // XSM-031: counters are integral or decimal members; the step is a number that fits
+    {
+        using var os = db.NewObjectSpace();
+        string? Check(Type type, string target, string value) =>
+            new XafWorkflowEnvironment([], os.TypesInfo.FindTypeInfo(type)).CheckEffect(new(EffectKind.Increment, target, value));
+
+        Assert.Null(Check(typeof(PurchaseRequest), "Revisions", ""));       // step 1
+        Assert.Null(Check(typeof(PurchaseRequest), "Revisions", "-1"));
+        Assert.Null(Check(typeof(PurchaseRequest), "Amount", "0.5"));
+        Assert.Null(Check(typeof(WorkflowDefinition), "Version", "2"));
+        Assert.Contains("'Title'", Check(typeof(PurchaseRequest), "Title", "1"));
+        Assert.Contains("'Ordered'", Check(typeof(PurchaseRequest), "Ordered", "1"));
+        Assert.Contains("'State'", Check(typeof(WorkflowDefinition), "State", "1"));   // an enum: its TypeCode is Int32, still not a counter
+        Assert.Contains("'abc'", Check(typeof(PurchaseRequest), "Revisions", "abc"));
+        Assert.Contains("'1.5'", Check(typeof(WorkflowDefinition), "Version", "1.5"));   // a whole-number member takes whole steps
+    }
+
+    [Fact] public void Increment_target_lookup_lists_counters_only()   // XSM-031
+    {
+        using var os = db.NewObjectSpace();
+        var d = Draft(os, Unique());
+        var e = E(os, d.States.Single(s => s.Key == "ordered"), EffectKind.Increment, "", "");
+        Assert.Equal(["Amount", "Revisions"], ((IStringLookupSource)e).LookupValues(nameof(WorkflowEffect.Target), () => []).Order());
+        e.Kind = EffectKind.SetField;
+        Assert.Equal(["Amount", "Ordered", "Revisions", "Title"], ((IStringLookupSource)e).LookupValues(nameof(WorkflowEffect.Target), () => []).Order());
+    }
+
     [Fact] public void Criteria_with_unknown_member_is_refused()
     {
         using var os = db.NewObjectSpace();

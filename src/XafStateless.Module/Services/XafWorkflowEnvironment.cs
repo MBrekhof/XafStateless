@@ -25,6 +25,14 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
 
     public string? CheckEffect(EffectDef effect)
     {
+        if (effect.Kind == EffectKind.Increment)
+        {
+            if (WorkflowMembers.Counters(target).FirstOrDefault(m => m.Name == effect.Target) is not { } counter)
+                return $"'{effect.Target}' is not a whole-number or decimal member of {target.Name}, so it cannot be incremented";
+            if (!TryStep(effect.Value, out var step)) return $"'{effect.Value}' is not a step for '{effect.Target}'";
+            return WorkflowMembers.IsIntegral(counter.MemberType) && step != decimal.Truncate(step)
+                ? $"'{effect.Value}' is not a whole step for '{effect.Target}'" : null;
+        }
         if (effect.Value is null)   // a nulled column; the record's type says non-null, the database does not
             return effect.Kind == EffectKind.SetField ? $"'{effect.Target}' needs a value" : "a notification needs a text";
         switch (effect.Kind)
@@ -45,6 +53,13 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
 
     public string? CheckMember(string member) =>
         WorkflowMembers.Supported(target).Any(m => m.Name == member) ? null : $"'{member}' is not a member of {target.Name} that a workflow may use";
+
+    /// <summary>An Increment's step: null or "" is 1, else an invariant-culture decimal.</summary>
+    internal static bool TryStep(string? value, out decimal step)
+    {
+        step = 1;
+        return string.IsNullOrWhiteSpace(value) || decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out step);
+    }
 
     /// <summary>The one text-to-member conversion (validation now, SetField at runtime): invariant culture; "" is null for a nullable member.</summary>
     internal static object? ConvertValue(Type memberType, string value)

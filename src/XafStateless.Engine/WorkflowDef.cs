@@ -2,7 +2,10 @@ namespace XafStateless.Engine;
 
 public enum StateKind { Manual, Task, Wait, Decision, Final }
 
-public enum EffectKind { Notify, SetField }
+/// <summary>Notify: Target = role or <see cref="EffectDef.Requester"/>, Value = text with {Member} placeholders. SetField: Target = member,
+/// Value = the new value as text. Increment: Target = a whole-number or decimal member, Value = the step as text ("" = 1), so a
+/// workflow can count attempts and a Decision can limit them (XSM-031).</summary>
+public enum EffectKind { Notify, SetField, Increment }
 
 public sealed record EffectDef(EffectKind Kind, string Target, string Value)
 {

@@ -16,11 +16,11 @@ public class WorkflowEffect : BaseObject, IStringLookupSource
     [RuleRequiredField, EditorAlias(StringLookup.Single)] public virtual string Target { get; set; } = "";
     public virtual string Value { get; set; } = "";
 
-    /// <summary>Target: role names for Notify, the subject's settable members for SetField.</summary>
+    /// <summary>Target: role names for Notify, the subject's settable members for SetField, its counters for Increment.</summary>
     public IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames) =>
         memberName != nameof(Target) ? []
         : Kind == EffectKind.Notify ? [EffectDef.Requester, .. roleNames()]
         : XafTypesInfo.Instance.FindTypeInfo(State?.Definition?.TargetTypeName ?? "") is { } target
-            ? WorkflowMembers.Supported(target).Select(m => m.Name)
+            ? (Kind == EffectKind.Increment ? WorkflowMembers.Counters(target) : WorkflowMembers.Supported(target)).Select(m => m.Name)
             : [];
 }
