@@ -1,12 +1,22 @@
-﻿<?xml version="1.0" ?>
+<?xml version="1.0" ?>
 <Application Title="XafStateless.Demo">
   <BOModel>
     <Class Name="DevExpress.Persistent.BaseImpl.EF.PermissionPolicy.PermissionPolicyUser" Caption="Base User" />
   </BOModel>
+  <NavigationItems>
+    <Items>
+      <Item Id="Default">
+        <Items>
+          <Item Id="StartRequests" Caption="Start requests" ImageName="Action_Start" View="StartRequestsScreen_DetailView" IsNewNode="True" />
+        </Items>
+      </Item>
+    </Items>
+  </NavigationItems>
   <Options>
     <LayoutManagerOptions RequiredFieldMark="*" />
   </Options>
   <Views>
     <ListView Id="ApplicationUser_ListView" Caption="Users" />
+    <ListView Id="StartRequestsScreen_Requests_ListView" DataAccessMode="Client" />
   </Views>
 </Application>

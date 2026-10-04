@@ -73,6 +73,8 @@ Proof of concept, feature-complete for the demo:
   host-registered action in the transition's commit, for records other than the subject;
 - per-state field locks;
 - the permission matrix;
+- entry screens: a page opened from the navigation (lookup, checkboxes, a list of subjects) whose Start action starts the
+  workflow on each selected subject, through the user's secured object space;
 - the designer: Target Type picked from the workflow subject classes, validation while editing (problem states in red in
   the list and the diagram, Publish and Dry run gated), the diagram with zoom, portrait/landscape and colors by step type.
 
@@ -107,7 +109,7 @@ Open http://localhost:5000. The seeded users all have empty passwords:
 | User | Role | Try |
 |---|---|---|
 | `designer` | WorkflowDesigners | Workflow > Workflow Definition > purchase-request > **New version**, edit, **Validate**, **Publish**, **Dry run** |
-| `approver` | Approvers | Purchase Request > New > **Start workflow** > **Transition** Submit; Workflow Task > **Decide** |
+| `approver` | Approvers | Purchase Request > New > **Start workflow** > **Transition** Submit; Workflow Task > **Decide**; **Start requests**: pick a workflow and several requests, **Start** |
 | `Admin` | Administrators | all data and the designer actions (holds no Approvers role, so no tasks to decide) |
 
 The seeded `purchase-request` v1 runs Draft → Approval (a task for Approvers; Amount locked) → Amount check → Ordered.

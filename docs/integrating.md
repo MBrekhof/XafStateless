@@ -421,7 +421,52 @@ empty name, fail when the catalog is first resolved (the first command, validati
 that at startup resolves the catalog there. A definition whose action a later host version no longer registers fails at
 runtime with "workflow action '…' is not registered in this application", committing nothing.
 
-## 11. Check it
+## 11. Entry screens
+
+Many applications start work not from a subject's list but from a page of its own: a lookup, a few checkboxes, a list to
+pick from, and a Start button that leads to the next screen. In XAF that page is a **non-persistent object's DetailView
+opened from a navigation item** (DevExpress docs 113471); this module adds the small parts that make it a workflow entry
+screen (XSM-033). The demo's `StartRequestsScreen` (`XafStateless.Demo.Module/BusinessObjects/`) and
+`StartRequestsController` (`.../Controllers/`) are the copy source.
+
+1. **The screen class**: `[DomainComponent]`, implementing `IEntryScreen` (a marker from `XafStateless.Module.Controllers`),
+   `IObjectSpaceLink` and `INotifyPropertyChanged`, with a hidden Guid `[Key]`. Bool properties are checkboxes, enums are
+   dropdowns, a string with `[EditorAlias(StringLookup.Single)]` plus `IStringLookupSource` is a lookup (the demo's
+   `Workflow` lists the published definitions for the subject type), and an `IList<Subject>` property backed by a
+   `BindingList<Subject>` is a nested list the user selects rows in. Load the list in one `Reload()` method, called when
+   the object space is linked, when a filter checkbox changes (`[ImmediatePostData]`), after Start and on Refresh: refresh
+   the additional object spaces, requery through the screen's object space (`GetObjects<Subject>(criteria)`), then refill
+   the same BindingList so the nested list sees list-changed events.
+2. **The navigation item**: in the module's `Model.DesignedDiffs.xafml`, an item with `View="<Screen>_DetailView"` and no
+   ObjectKey. `EntryScreenController` (this module) then creates a fresh screen whenever the view opens (also on a deep link
+   in a new circuit), marks it unmodified so leaving never asks to save, and hides Save. Set the nested list's
+   `DataAccessMode="Client"` in the same file. Grant the role Navigate on the item (the demo's Updater does it next to
+   `GrantParticipant`).
+3. **The host's Startup**: the non-persistent object space must reach persistent objects (docs 116106). After
+   `.AddNonPersistent()`:
+   ```csharp
+   builder.ObjectSpaceProviders.Events.OnObjectSpaceCreated = context => {
+       if (context.ObjectSpace is CompositeObjectSpace { Owner: not CompositeObjectSpace } composite)
+           composite.PopulateAdditionalObjectSpaces(
+               context.ServiceProvider.GetRequiredService<IObjectSpaceProviderService>(),
+               context.ServiceProvider.GetRequiredService<IObjectSpaceCustomizerService>());
+   };
+   ```
+   The additional space is the user's secured EF Core space, so the screen's lookups and lists obey the user's permissions.
+4. **The Start action** (a controller on the screen's DetailView): read the selected rows from the nested list's editor
+   (`View.GetItems<ListPropertyEditor>()` → `ListView.SelectedObjects`) and capture their ids before anything reloads; then
+   for each run `WorkflowRuntime.Start(caller, typeof(Subject), id, definition)`, one command per subject. **Build the caller
+   with the subject type: `WorkflowCommand.Caller(Application, View.ObjectSpace, typeof(Subject))`.** The two-argument
+   `Caller` takes the view's object space as the user's secured space; a screen's space is non-persistent, and the runtime's
+   Write check only knows secured spaces, so with it a user with Read only could start workflows. The three-argument form
+   resolves the persistent space behind the non-persistent one (by the space's own known types, not `CanInstantiate`, which
+   a composite answers through its additional spaces) and refuses an unsecured one when the application has security.
+   Report both halves ("Started 2 of 3." plus the first refusal), reload, and open the next screen through
+   `e.ShowViewParameters.CreatedView` with the subject loaded by id into a new object space, in the screen's own tab
+   (`TargetWindow.Current`): a new tab is skipped when the subject is already open in another tab, and that stale tab
+   would show it without its workflow.
+
+## 12. Check it
 
 Run the host, log on as a designer, and open **Workflow > Workflow Definition**. Create a definition for the subject
 class and publish it: the diagram draws under the States and Transitions tabs. Then, as a participant, open a subject

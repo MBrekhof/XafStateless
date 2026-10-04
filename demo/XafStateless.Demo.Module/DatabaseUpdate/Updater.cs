@@ -36,7 +36,11 @@ public class Updater : ModuleUpdater {
         // If a role doesn't exist in the database, create this role
         var defaultRole = CreateDefaultRole();
         var adminRole = CreateAdminRole();
-        var approversRole = GrantRole("Approvers", r => WorkflowPermissions.GrantParticipant(r, (typeof(PurchaseRequest), "PurchaseRequest_ListView")));
+        var approversRole = GrantRole("Approvers", r => {
+            WorkflowPermissions.GrantParticipant(r, (typeof(PurchaseRequest), "PurchaseRequest_ListView"));
+            const string startRequests = "Application/NavigationItems/Items/Default/Items/StartRequests";   // the entry screen (XSM-033)
+            if(r.NavigationPermissions.All(n => n.ItemPath != startRequests)) r.AddNavigationPermission(startRequests, SecurityPermissionState.Allow);
+        });
         var designersRole = GrantRole("WorkflowDesigners", WorkflowPermissions.GrantDesigner);
 
         ObjectSpace.CommitChanges(); //This line persists created object(s).

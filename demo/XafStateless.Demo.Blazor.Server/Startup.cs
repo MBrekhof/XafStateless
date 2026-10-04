@@ -64,6 +64,14 @@ public class Startup {
                     options.UseConnectionString(connectionString);
                 })
                 .AddNonPersistent();
+            // Entry screens (non-persistent, XSM-033) reach persistent objects through the user's secured object space: docs 116106.
+            builder.ObjectSpaceProviders.Events.OnObjectSpaceCreated = context => {
+                if(context.ObjectSpace is DevExpress.ExpressApp.CompositeObjectSpace { Owner: not DevExpress.ExpressApp.CompositeObjectSpace } composite) {
+                    composite.PopulateAdditionalObjectSpaces(
+                        context.ServiceProvider.GetRequiredService<DevExpress.ExpressApp.Core.IObjectSpaceProviderService>(),
+                        context.ServiceProvider.GetRequiredService<DevExpress.ExpressApp.Core.IObjectSpaceCustomizerService>());
+                }
+            };
             builder.Security
                 .UseIntegratedMode(options => {
                     options.Lockout.Enabled = true;

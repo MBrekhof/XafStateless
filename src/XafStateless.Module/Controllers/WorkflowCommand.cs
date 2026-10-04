@@ -36,6 +36,30 @@ public static class WorkflowCommand
             });
     }
 
+    /// <summary>The caller for a command issued from an entry screen (<see cref="IEntryScreen"/>) or any other view whose object
+    /// space is not the subject's: its Secured is the object space of <paramref name="os"/> that holds <paramref name="subjectType"/>
+    /// (<see cref="SpaceFor"/>). With a non-persistent space as Secured the runtime's Write check would be skipped (it only
+    /// knows ISecuredObjectSpace), so a user with Read only could start workflows from a screen; this overload makes that
+    /// impossible: with security configured, a resolved space that is not secured is refused.</summary>
+    public static WorkflowCaller Caller(XafApplication app, IObjectSpace os, Type subjectType) =>
+        Caller(app, SpaceFor(os, subjectType, app.Security is IRequestSecurityStrategy));
+
+    /// <summary>The object space of <paramref name="os"/> that holds <paramref name="subjectType"/>: <paramref name="os"/> itself when
+    /// it knows the type by itself, else the first additional object space of the composite (an entry screen's non-persistent
+    /// space, populated by the host) that knows it. Never CanInstantiate: on a composite it answers through the additional spaces
+    /// and would hand back the composite (Codex, 2026-10-04). With <paramref name="securityConfigured"/> the result must be an
+    /// <see cref="ISecuredObjectSpace"/>; a plain space is accepted only in an application without security.</summary>
+    internal static IObjectSpace SpaceFor(IObjectSpace os, Type subjectType, bool securityConfigured)
+    {
+        var space = os is CompositeObjectSpace c && !c.IsKnownType(subjectType, false)
+            ? c.AdditionalObjectSpaces.FirstOrDefault(a => a.IsKnownType(subjectType))
+              ?? throw new InvalidOperationException($"No object space holds {subjectType.Name}: the host must populate the additional object spaces of non-persistent object spaces (integrating.md step 11).")
+            : os;
+        if (securityConfigured && space is not ISecuredObjectSpace)
+            throw new InvalidOperationException($"The object space for {subjectType.Name} is not secured; a workflow command needs the user's secured object space.");
+        return space;
+    }
+
     /// <summary>Commits pending changes of <paramref name="os"/>. A refused save (validation, security, a guard) shows its
     /// message and returns false; the pending changes stay for the user to fix.</summary>
     public static bool Save(XafApplication app, IObjectSpace os) => Save(os, m => ShowError(app, m));

@@ -191,6 +191,34 @@ public class PermissionTests : IClassFixture<TestDb>
         Assert.Equal("ordered", after.GetObjectByKey<PurchaseRequest>(pr.ID).Workflow!.StateKey);
     }
 
+    [Fact] public void Entry_screen_caller_carries_the_users_secured_space()   // XSM-033
+    {
+        // A screen's view has a non-persistent object space; its command must act through the secured space behind it, or the
+        // runtime's Write check never runs. The reader (Read only) is refused through the resolved space; the approver starts.
+        var name = PublishPurchaseRequest();
+        using var approverProvider = LogOn(Approver, out var approverSecurity);
+        using var approver = approverProvider.CreateObjectSpace();
+        var pr = approver.CreateObject<PurchaseRequest>();
+        (pr.Title, pr.Amount) = ("Lamp", 20);
+        approver.CommitChanges();
+
+        using var readerProvider = LogOn(Reader, out var readerSecurity);
+        using var readerScreen = new NonPersistentObjectSpace(XafTypesInfo.Instance);
+        readerScreen.AdditionalObjectSpaces.Add(readerProvider.CreateObjectSpace());
+        var readerSpace = WorkflowCommand.SpaceFor(readerScreen, typeof(PurchaseRequest), securityConfigured: true);
+        Assert.IsAssignableFrom<ISecuredObjectSpace>(readerSpace);
+        var refused = rt.Start(Caller(readerSpace, readerSecurity, Reader, "Approvers"), typeof(PurchaseRequest), pr.ID, name);
+        Assert.False(refused.Ok);
+        Assert.Contains("requires write access", refused.Message);
+
+        using var approverScreen = new NonPersistentObjectSpace(XafTypesInfo.Instance);
+        approverScreen.AdditionalObjectSpaces.Add(approverProvider.CreateObjectSpace());
+        var approverSpace = WorkflowCommand.SpaceFor(approverScreen, typeof(PurchaseRequest), securityConfigured: true);
+        Ok(rt.Start(Caller(approverSpace, approverSecurity, Approver, "Approvers"), typeof(PurchaseRequest), pr.ID, name));
+        using var check = db.NewObjectSpace();
+        Assert.Equal("draft", check.GetObjectByKey<PurchaseRequest>(pr.ID).Workflow!.StateKey);
+    }
+
     [Fact] public void Approver_cannot_edit_task_role()
     {
         using var provider = LogOn(Approver, out var security);

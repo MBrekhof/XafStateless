@@ -34,7 +34,7 @@ public class DesignerJourneyTests : PageTest
 
     public override BrowserNewContextOptions ContextOptions() => new() { ViewportSize = new() { Width = 1440, Height = 900 } };
 
-    [Test]
+    [Test, Order(1)]   // first: it needs v1 to be the latest version, and the approver's session unburdened by other tests' restored tabs
     public async Task Designer_adds_a_finance_step_and_each_request_follows_its_own_version()
     {
         SetDefaultExpectTimeout(S.TimeoutMs);
@@ -193,7 +193,7 @@ public class DesignerJourneyTests : PageTest
         await Shot(approver, "08-requester-notifications");
     }
 
-    [Test]
+    [Test, Order(2)]
     public async Task Designer_picks_the_target_type_of_a_new_definition_from_the_subjects()   // XSM-022
     {
         SetDefaultExpectTimeout(S.TimeoutMs);
@@ -213,6 +213,93 @@ public class DesignerJourneyTests : PageTest
         // The list shows the stored value: the full class name, not the caption the editor displays.
         await Nav(designer, "Workflow", "Workflow Definition");
         await Expect(Row(designer, name, "XafStateless.Demo.Module.BusinessObjects.PurchaseRequest")).ToHaveCountAsync(1);
+    }
+
+    [Test, Order(3)]   // last: XAF restores a user's open tabs at the next login, and this test leaves the approver several
+    public async Task Approver_starts_requests_from_the_entry_screen()   // XSM-033
+    {
+        SetDefaultExpectTimeout(S.TimeoutMs);
+        var approver = await LogIn(Page, S.Approver);
+        await CloseAllTabs(approver);   // XAF restores the user's tabs and caps them at 10 (MaxTabLimit): start clean
+        var tag = Guid.NewGuid().ToString("N")[..6];
+        string a = $"Entry A {tag}", b = $"Entry B {tag}", c = $"Entry C {tag}";
+        await NewRequest(approver, a, 50);
+        await NewRequest(approver, b, 2000);
+        await NewRequest(approver, c, 70);
+
+        // Opened by a plain navigation click (no Refresh): what the activator does on its own is what is tested.
+        await NavPlain(approver, "Default", "Start requests");
+        await Expect(Button(approver, "Start")).ToBeVisibleAsync();
+        await Expect(Button(approver, "Save")).ToBeHiddenAsync();   // nothing to save on a screen
+        await Button(approver, "Start").ClickAsync();
+        await Expect(Alert(approver, "Pick a workflow.")).ToBeVisibleAsync();
+        await Shot(approver, "10-start-requests-screen");
+
+        var onlyLarge = approver.GetByRole(AriaRole.Checkbox, new() { Name = "Only large amounts" });
+        await onlyLarge.CheckAsync();
+        await Expect(ScreenRow(approver, b)).ToBeVisibleAsync();
+        await Expect(ScreenRow(approver, a)).ToHaveCountAsync(0);
+        await onlyLarge.UncheckAsync();
+        await Expect(ScreenRow(approver, a)).ToBeVisibleAsync();
+        await Expect(ScreenRow(approver, c)).ToBeVisibleAsync();
+
+        await Pick(approver, "Workflow", "purchase-request");
+        await Button(approver, "Start").ClickAsync();
+        await Expect(Alert(approver, "Select at least one request.")).ToBeVisibleAsync();
+        await SelectRow(approver, a);
+        await SelectRow(approver, c);
+        await Button(approver, "Start").ClickAsync();
+        await Expect(Alert(approver, "Started 2 of 2.")).ToBeVisibleAsync();
+        await Expect(ScreenRow(approver, a)).ToHaveCountAsync(0);   // started: no longer without a workflow
+        await Expect(ScreenRow(approver, c)).ToHaveCountAsync(0);
+        await Expect(ScreenRow(approver, b)).ToBeVisibleAsync();
+        await Shot(approver, "10b-started");
+
+        // One selected with "open after start": the request's own view replaces the screen, its workflow in Draft.
+        await SelectRow(approver, b);
+        await Button(approver, "Start").ClickAsync();
+        await Expect(SelectedViewTab(approver)).ToContainTextAsync(b);
+        try { await Expect(WorkflowLink(approver, "Draft")).ToBeVisibleAsync(); }
+        catch (PlaywrightException) { await Shot(approver, "zz-entry-open-after-start-failed"); throw; }
+        await Shot(approver, "10c-opened-after-start");
+
+        // Back to the screen from the navigation: a fresh one, and leaving it asked nothing.
+        await NavPlain(approver, "Default", "Start requests");
+        await Expect(approver.GetByRole(AriaRole.Combobox, new() { Name = "Workflow", Exact = true })).ToHaveValueAsync("");
+        await Expect(approver.GetByRole(AriaRole.Checkbox, new() { Name = "Open the request after starting" })).ToBeCheckedAsync();
+        await Expect(ScreenRow(approver, b)).ToHaveCountAsync(0);
+    }
+
+    /// <summary>A row of the screen's nested list holding <paramref name="title"/>.</summary>
+    ILocator ScreenRow(IPage p, string title) => p.GetByRole(AriaRole.Row).Filter(new() { Has = p.GetByRole(AriaRole.Gridcell, new() { Name = title, Exact = true }) });
+
+    /// <summary>Select a nested-list row: its selection checkbox when the grid shows one, else a click on a non-link cell.</summary>
+    async Task SelectRow(IPage p, string title)
+    {
+        var row = ScreenRow(p, title);
+        var box = row.GetByRole(AriaRole.Checkbox);
+        if (await box.CountAsync() > 0) await box.First.CheckAsync();
+        else await row.GetByRole(AriaRole.Gridcell).Last.ClickAsync();
+    }
+
+    /// <summary>Close every closable tab (XAF restores a user's tabs at login; a session at the tab cap cannot open a view).</summary>
+    async Task CloseAllTabs(IPage p)
+    {
+        var close = p.GetByRole(AriaRole.Main).Locator(".xaf-close-tab-button:visible");
+        for (var n = await close.CountAsync(); n > 0; n = await close.CountAsync())
+        {
+            await close.First.ClickAsync();
+            await Expect(close).ToHaveCountAsync(n - 1);
+        }
+    }
+
+    /// <summary>A navigation click without the Refresh <see cref="Nav"/> adds: for a screen, initialization is the point.</summary>
+    async Task NavPlain(IPage p, string group, string item)
+    {
+        var entry = p.GetByRole(AriaRole.Treeitem, new() { Name = item, Exact = true });
+        if (!await entry.IsVisibleAsync()) await p.GetByRole(AriaRole.Application, new() { Name = group, Exact = true }).ClickAsync();
+        await entry.ClickAsync();
+        await Expect(SelectedViewTab(p)).ToContainTextAsync(item);
     }
 
     // ---- helpers: one per UI gesture ----
@@ -360,7 +447,8 @@ public class DesignerJourneyTests : PageTest
     {
         await Nav(p, "Workflow", "Workflow Task");
         await Row(p, subject, stateKey).GetByRole(AriaRole.Gridcell, new() { Name = subject, Exact = true }).ClickAsync();
-        await Expect(Button(p, "Decide")).ToBeVisibleAsync();
+        try { await Expect(Button(p, "Decide")).ToBeVisibleAsync(); }
+        catch (PlaywrightException) { await Shot(p, $"zz-open-task-{stateKey}-failed"); throw; }
     }
 
     string ShotPath(string name)
