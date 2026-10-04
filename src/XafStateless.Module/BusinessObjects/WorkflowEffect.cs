@@ -16,11 +16,18 @@ public class WorkflowEffect : BaseObject, IStringLookupSource
     [RuleRequiredField, EditorAlias(StringLookup.Single)] public virtual string Target { get; set; } = "";
     public virtual string Value { get; set; } = "";
 
-    /// <summary>Target: role names for Notify, the subject's settable members for SetField, its counters for Increment.</summary>
-    public IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames) =>
+    public IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames) => LookupValues(memberName, roleNames, () => []);
+
+    /// <summary>Target: role names for Notify, the host's action names for RunAction, the subject's settable members for SetField,
+    /// its counters for Increment.</summary>
+    public IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames, Func<IReadOnlyList<string>> actionNames) =>
         memberName != nameof(Target) ? []
-        : Kind == EffectKind.Notify ? [EffectDef.Requester, .. roleNames()]
-        : XafTypesInfo.Instance.FindTypeInfo(State?.Definition?.TargetTypeName ?? "") is { } target
-            ? (Kind == EffectKind.Increment ? WorkflowMembers.Counters(target) : WorkflowMembers.Supported(target)).Select(m => m.Name)
-            : [];
+        : Kind switch
+        {
+            EffectKind.Notify => [EffectDef.Requester, .. roleNames()],
+            EffectKind.RunAction => actionNames(),
+            _ => XafTypesInfo.Instance.FindTypeInfo(State?.Definition?.TargetTypeName ?? "") is { } target
+                ? (Kind == EffectKind.Increment ? WorkflowMembers.Counters(target) : WorkflowMembers.Supported(target)).Select(m => m.Name)
+                : [],
+        };
 }

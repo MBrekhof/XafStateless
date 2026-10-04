@@ -201,6 +201,43 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         Assert.Contains("'1.5'", Check(typeof(WorkflowDefinition), "Version", "1.5"));   // a whole-number member takes whole steps
     }
 
+    [Fact] public void Publish_refuses_unregistered_action()   // XSM-032: svc has no action catalog, so every name is unregistered
+    {
+        using var os = db.NewObjectSpace();
+        var d = Draft(os, Unique());
+        E(os, d.States.Single(s => s.Key == "ordered"), EffectKind.RunAction, "refund", "");
+        os.CommitChanges();
+        var r = svc.Publish(os, d, "tester", Roles());
+        Assert.False(r.Ok);
+        Assert.Contains(r.Messages, m => m.Contains("effect on 'ordered':") && m.Contains("action 'refund' is not registered"));
+        Assert.Equal(DefinitionState.Draft, StateOf(d.ID));
+
+        // The DI-resolved service validates with the host's registered actions (the catalog reaches it, not the empty default).
+        var services = new ServiceCollection();
+        services.AddXafStateless();
+        services.AddSingleton<IWorkflowAction, RefundAction>();
+        using var provider = services.BuildServiceProvider();
+        Assert.True(provider.GetRequiredService<DefinitionService>().Validate(os, d, Roles()).Ok);
+    }
+
+    [Fact] public void RunAction_argument_placeholders_must_be_members()
+    {
+        using var os = db.NewObjectSpace();
+        var env = new XafWorkflowEnvironment([], os.TypesInfo.FindTypeInfo(typeof(PurchaseRequest)), ["refund"]);
+        Assert.Null(env.CheckEffect(new(EffectKind.RunAction, "refund", "")));
+        Assert.Null(env.CheckEffect(new(EffectKind.RunAction, "refund", "Refund for {Title}")));
+        Assert.Contains("'{Nope}'", env.CheckEffect(new(EffectKind.RunAction, "refund", "Refund {Nope}")));
+    }
+
+    [Fact] public void RunAction_target_lookup_lists_actions()
+    {
+        using var os = db.NewObjectSpace();
+        var d = Draft(os, Unique());
+        IStringLookupSource e = E(os, d.States.Single(s => s.Key == "ordered"), EffectKind.RunAction, "", "");
+        Assert.Equal(["log", "refund"], e.LookupValues(nameof(WorkflowEffect.Target), () => [], () => ["log", "refund"]));
+        Assert.Empty(e.LookupValues(nameof(WorkflowEffect.Target), () => []));   // the two-argument form knows no actions
+    }
+
     [Fact] public void Increment_target_lookup_lists_counters_only()   // XSM-031
     {
         using var os = db.NewObjectSpace();

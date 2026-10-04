@@ -5,6 +5,7 @@ using DevExpress.ExpressApp.EFCore;
 using DevExpress.Persistent.BaseImpl.EF.PermissionPolicy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using XafStateless.Demo.Module.BusinessObjects;
 using XafStateless.Engine;
 using XafStateless.Module.BusinessObjects;
@@ -16,12 +17,15 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
 {
     readonly TestDb db;
     readonly FakeClock clock = new(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+    readonly RefundAction refund = new();   // the fixture's ordered state runs it (XSM-032)
+    readonly WorkflowActionCatalog actions;
     readonly WorkflowRuntime rt;
 
     public WorkflowRuntimeTests(TestDb db)
     {
         this.db = db;
-        rt = new WorkflowRuntime(new DefinitionStore(), clock);
+        actions = new([refund]);
+        rt = new WorkflowRuntime(new DefinitionStore(), clock, actions);
         using var os = db.NewObjectSpace();
         foreach (var role in new[] { "Approvers", "Administrators" })
             if (os.FirstOrDefault<PermissionPolicyRole>(r => r.Name == role) == null)
@@ -74,8 +78,10 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
                 OnEntry: [new(EffectKind.Notify, "Approvers", "Please approve {Title}")]),
             new("decide-amount", "Amount check", StateKind.Decision),
             new("wait-cooling", "Cooling-off", StateKind.Wait, WaitMinutes: 1),
-            // Increment Revisions (null -> 1): a retried attempt must leave exactly one increment (XSM-031).
-            new("ordered", "Ordered", StateKind.Final, OnEntry: [new(EffectKind.SetField, "Ordered", "true"), new(EffectKind.Notify, "Approvers", "Ordered: {Title}"), new(EffectKind.Increment, "Revisions", "")]),
+            // RunAction refund writes a related request (XSM-032); Increment Revisions (null -> 1) after it: a retried attempt must
+            // leave exactly one of each (XSM-031), and an Increment that overflows must take the refund down with it.
+            new("ordered", "Ordered", StateKind.Final, OnEntry: [new(EffectKind.SetField, "Ordered", "true"), new(EffectKind.Notify, "Approvers", "Ordered: {Title}"),
+                new(EffectKind.RunAction, "refund", RefundAction.Title + "{Title}"), new(EffectKind.Increment, "Revisions", "")]),
             new("rejected", "Rejected", StateKind.Final),
         ],
         [
@@ -99,7 +105,7 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
         using var os = db.NewObjectSpace();
         var d = DefinitionMapper.ToDraft(os, def, typeof(PurchaseRequest).FullName!);
         os.CommitChanges();
-        var r = new DefinitionService(new DefinitionStore()).Publish(os, d, "tester", Roles());
+        var r = new DefinitionService(new DefinitionStore(), actions).Publish(os, d, "tester", Roles());
         Assert.True(r.Ok, string.Join("; ", r.Messages));
         return d.ID;
     }
@@ -144,6 +150,13 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
         db.NewObjectSpace().GetObjectsQuery<WorkflowNotification>().Where(n => n.Instance!.ID == instanceId).ToList();
 
     Guid OpenTask(Guid instanceId) => Tasks(instanceId).Single(t => t.State == TaskState.Open).ID;
+
+    /// <summary>The refund requests the fixture's ordered action wrote for request <paramref name="id"/>.</summary>
+    int Refunds(Guid id)
+    {
+        var title = RefundAction.Title + Request(id).Title;
+        return db.NewObjectSpace().GetObjectsQuery<PurchaseRequest>().Count(p => p.Title == title);
+    }
 
     [Fact] public void Start_pins_published_version_and_enters_initial()
     {
@@ -371,6 +384,7 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
         Assert.Equal(("approval", before), (after.StateKey, after.OptimisticLockField));
         Assert.Equal(TaskState.Open, Tasks(inst).Single(t => t.ID == task).State);
         Assert.DoesNotContain(Notifications(inst), n => n.Body.StartsWith("Ordered:"));
+        Assert.Equal(0, Refunds(id));   // the action's related record went down with the rest (XSM-032)
     }
 
     [Fact] public void Retry_reloads_after_lost_race()
@@ -394,6 +408,85 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
         Assert.Equal("ordered", Instance(id).StateKey);
         Assert.Single(Notifications(inst), n => n.Body.StartsWith("Ordered:"));
         Assert.Equal(1, Request(id).Revisions);   // the first attempt's increment was rolled back with its object space
+        Assert.Equal((2, 1), (refund.Calls, Refunds(id)));   // the action ran once per attempt; only the last attempt's row persists (XSM-032)
+    }
+
+    [Fact] public void RunAction_writes_through_the_command_space_and_fills_the_argument()   // XSM-032
+    {
+        var title = $"Desk {Guid.NewGuid():N}";
+        var (id, inst) = Started(10, title: title);
+
+        Ok(rt.Decide(Alice(), OpenTask(inst), "Approve"));
+
+        Assert.Equal(1, Refunds(id));
+        Assert.Equal([(id, "ordered")], refund.Seen);   // the subject, its instance already in the entered state
+        Assert.Equal("ordered", Instance(id).StateKey);
+    }
+
+    [Fact] public void RunAction_that_throws_commits_nothing()
+    {
+        refund.Also = _ => throw new UserFriendlyException("no slots");   // after it staged its refund row
+        var (id, inst) = Started(10);
+        var task = OpenTask(inst);
+
+        var ex = Record.Exception(() => rt.Decide(Alice(), task, "Approve"));
+
+        Assert.Equal("no slots", Assert.IsType<UserFriendlyException>(ex).Message);
+        Assert.Equal(("approval", false, 0), (Instance(id).StateKey, Request(id).Ordered, Refunds(id)));
+        Assert.Equal(TaskState.Open, Tasks(inst).Single(t => t.ID == task).State);
+    }
+
+    [Fact] public void Failing_effect_after_action_commits_nothing()
+    {
+        var (id, inst) = Started(10);
+        using (var os = db.NewObjectSpace())
+        {
+            os.GetObjectByKey<PurchaseRequest>(id).Revisions = int.MaxValue;   // the fixture's Increment, after the action, overflows
+            os.CommitChanges();
+        }
+
+        var ex = Record.Exception(() => rt.Decide(Alice(), OpenTask(inst), "Approve"));
+
+        Assert.Equal("'Revisions' cannot be incremented past its range", Assert.IsType<UserFriendlyException>(ex).Message);
+        Assert.Equal((1, "approval", 0), (refund.Calls, Instance(id).StateKey, Refunds(id)));
+    }
+
+    [Fact] public void DI_resolved_runtime_runs_the_registered_action()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<TimeProvider>(clock);
+        services.AddXafStateless();
+        services.AddSingleton<IWorkflowAction>(refund);
+        using var provider = services.BuildServiceProvider();
+        var (id, inst) = Started(10);
+
+        Ok(provider.GetRequiredService<WorkflowRuntime>().Decide(Alice(), OpenTask(inst), "Approve"));
+
+        Assert.Equal((1, 1), (refund.Calls, Refunds(id)));
+    }
+
+    [Fact] public void Unregistered_action_at_runtime_commits_nothing()
+    {
+        var (id, inst) = Started(10);
+        var bare = new WorkflowRuntime(new DefinitionStore(), clock);   // a host that lost the registration after publishing
+
+        var ex = Record.Exception(() => bare.Decide(Alice(), OpenTask(inst), "Approve"));
+
+        Assert.Contains("'refund'", Assert.IsType<InvalidOperationException>(ex).Message);
+        Assert.Equal(("approval", false), (Instance(id).StateKey, Request(id).Ordered));
+    }
+
+    [Fact] public void RunAction_cannot_change_a_locked_member()
+    {
+        var name = Unique();
+        var def = Fixture(name) with { States = Fixture(name).States.Select(s => s.Key == "approval" ? s with { Locked = ["Amount"] } : s).ToList() };
+        refund.Also = c => ((PurchaseRequest)c.Subject).Amount = 999;   // no effect of ordered writes Amount, so no exemption
+        var (id, inst) = Started(10, def: def);
+
+        var ex = Record.Exception(() => rt.Decide(Alice(), OpenTask(inst), "Approve"));
+
+        Assert.Equal("'Amount' is locked in state 'Approval'", Assert.IsType<UserFriendlyException>(ex).Message);
+        Assert.Equal(("approval", 10m, 0), (Instance(id).StateKey, Request(id).Amount, Refunds(id)));
     }
 
     /// <summary>theory -Fail-> count (Decision; Increment <paramref name="member"/> by <paramref name="step"/>) -Limit [criteria]-> failed / -Retry-> theory; theory -Pass-> passed.
@@ -525,7 +618,7 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
         var id = NewRequest(10);
         Ok(rt.Start(Alice(), typeof(PurchaseRequest), id, name));
 
-        var svc = new DefinitionService(new DefinitionStore());
+        var svc = new DefinitionService(new DefinitionStore(), actions);
         using (var os = db.NewObjectSpace())
         {
             var draft = svc.NewDraft(os, name);
@@ -535,7 +628,7 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
         }
         Assert.Equal(DefinitionState.Retired, db.NewObjectSpace().GetObjectByKey<WorkflowDefinition>(v1).State);
 
-        var cold = new WorkflowRuntime(new DefinitionStore(), clock);   // a restart: empty definition cache
+        var cold = new WorkflowRuntime(new DefinitionStore(), clock, actions);   // a restart: empty definition cache
         Ok(cold.Fire(Alice(), typeof(PurchaseRequest), id, "Submit"));
         var inst = Instance(id);
         Assert.Equal(("approval", v1), (inst.StateKey, inst.Definition!.ID));

@@ -8,8 +8,9 @@ using XafStateless.Engine;
 
 namespace XafStateless.Module.Services;
 
-/// <summary>The validator's view of XAF: role names (from <see cref="WorkflowRoleCatalog"/>) and the subject's type info.</summary>
-public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNames, ITypeInfo target) : IWorkflowEnvironment
+/// <summary>The validator's view of XAF: role names (from <see cref="WorkflowRoleCatalog"/>), the subject's type info and the
+/// host's action names (from <see cref="WorkflowActionCatalog"/>).</summary>
+public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNames, ITypeInfo target, IReadOnlyList<string>? actionNames = null) : IWorkflowEnvironment
 {
     public bool RoleExists(string role) => roleNames.Contains(role);
 
@@ -33,6 +34,10 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
             return WorkflowMembers.IsIntegral(counter.MemberType) && step != decimal.Truncate(step)
                 ? $"'{effect.Value}' is not a whole step for '{effect.Target}'" : null;
         }
+        if (effect.Kind == EffectKind.RunAction)
+            return (actionNames ?? []).Contains(effect.Target)
+                ? BadPlaceholder(effect.Value ?? "")
+                : $"action '{effect.Target}' is not registered in this application";
         if (effect.Value is null)   // a nulled column; the record's type says non-null, the database does not
             return effect.Kind == EffectKind.SetField ? $"'{effect.Target}' needs a value" : "a notification needs a text";
         switch (effect.Kind)
@@ -44,11 +49,17 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
                 catch (Exception ex) when (ex is FormatException or OverflowException or ArgumentException or InvalidCastException)
                 { return $"'{effect.Value}' is not a valid {(Nullable.GetUnderlyingType(member.MemberType) ?? member.MemberType).Name} for '{effect.Target}'"; }
             case EffectKind.Notify:
-                var bad = Placeholder().Matches(effect.Value).Select(m => m.Groups[1].Value).FirstOrDefault(n => target.FindMember(n) == null);
-                return bad == null ? null : $"placeholder '{{{bad}}}' is not a member of {target.Name}";
+                return BadPlaceholder(effect.Value);
             default:
                 return $"unknown effect kind {effect.Kind}";
         }
+    }
+
+    /// <summary>The first {Placeholder} of <paramref name="template"/> that is not a member of the subject, as a finding; null when all are.</summary>
+    string? BadPlaceholder(string template)
+    {
+        var bad = Placeholder().Matches(template).Select(m => m.Groups[1].Value).FirstOrDefault(n => target.FindMember(n) == null);
+        return bad == null ? null : $"placeholder '{{{bad}}}' is not a member of {target.Name}";
     }
 
     public string? CheckMember(string member) =>

@@ -18,9 +18,10 @@ public sealed record LookupItem(string Value, string Text);
 [PropertyEditor(typeof(string), StringLookup.Single, false)]
 public class StringLookupPropertyEditor(Type objectType, IModelMemberViewItem model) : BlazorPropertyEditorBase(objectType, model), IComplexViewItem
 {
-    Func<IReadOnlyList<string>> roleNames = () => [];
+    Func<IReadOnlyList<string>> roleNames = () => [], actionNames = () => [];
 
-    public void Setup(IObjectSpace objectSpace, XafApplication application) => roleNames = StringLookup.RoleNames(application.ServiceProvider);
+    public void Setup(IObjectSpace objectSpace, XafApplication application) =>
+        (roleNames, actionNames) = (StringLookup.RoleNames(application.ServiceProvider), StringLookup.ActionNames(application.ServiceProvider));
 
     public override DxComboBoxModel<LookupItem, string> ComponentModel => (DxComboBoxModel<LookupItem, string>)base.ComponentModel;
 
@@ -40,7 +41,7 @@ public class StringLookupPropertyEditor(Type objectType, IModelMemberViewItem mo
     protected override void ReadValueCore()
     {
         var source = CurrentObject as IStringLookupSource;
-        var values = source?.LookupValues(PropertyName, roleNames).ToList() ?? [];
+        var values = source?.LookupValues(PropertyName, roleNames, actionNames).ToList() ?? [];
         if (PropertyValue is string current && current.Length > 0 && !values.Contains(current)) values.Add(current);
         ComponentModel.Data = values.Select(v => new LookupItem(v, source?.LookupText(PropertyName, v) ?? v)).ToList();
         base.ReadValueCore();

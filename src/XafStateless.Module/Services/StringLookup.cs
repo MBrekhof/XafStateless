@@ -12,6 +12,11 @@ public interface IStringLookupSource
     /// Called only when a member lists roles.</param>
     IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames);
 
+    /// <param name="actionNames">Supplied by the editor: the host's workflow action names (<see cref="StringLookup.ActionNames"/>).
+    /// Called only when a member lists actions. Sources without such a member keep the two-argument form.</param>
+    IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames, Func<IReadOnlyList<string>> actionNames) =>
+        LookupValues(memberName, roleNames);
+
     /// <summary>The text shown for <paramref name="value"/> in the list and the field; the value itself unless a member
     /// stores something that reads badly (XSM-025: a full class name shows as its caption).</summary>
     string LookupText(string memberName, string value) => value;
@@ -31,4 +36,7 @@ public static class StringLookup
         using var os = services.GetRequiredService<INonSecuredObjectSpaceFactory>().CreateNonSecuredObjectSpace(typeof(PermissionPolicyRole));
         return WorkflowRoleCatalog.Names(os);
     };
+
+    /// <summary>The host's registered workflow action names (<see cref="WorkflowActionCatalog"/>).</summary>
+    public static Func<IReadOnlyList<string>> ActionNames(IServiceProvider services) => () => services.GetRequiredService<WorkflowActionCatalog>().Names;
 }

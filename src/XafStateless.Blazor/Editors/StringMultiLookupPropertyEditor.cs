@@ -14,9 +14,10 @@ namespace XafStateless.Blazor.Editors;
 [PropertyEditor(typeof(string), StringLookup.Multi, false)]
 public class StringMultiLookupPropertyEditor(Type objectType, IModelMemberViewItem model) : BlazorPropertyEditorBase(objectType, model), IComplexViewItem
 {
-    Func<IReadOnlyList<string>> roleNames = () => [];
+    Func<IReadOnlyList<string>> roleNames = () => [], actionNames = () => [];
 
-    public void Setup(IObjectSpace objectSpace, XafApplication application) => roleNames = StringLookup.RoleNames(application.ServiceProvider);
+    public void Setup(IObjectSpace objectSpace, XafApplication application) =>
+        (roleNames, actionNames) = (StringLookup.RoleNames(application.ServiceProvider), StringLookup.ActionNames(application.ServiceProvider));
 
     public override StringMultiLookupEditModel ComponentModel => (StringMultiLookupEditModel)base.ComponentModel;
 
@@ -36,7 +37,7 @@ public class StringMultiLookupPropertyEditor(Type objectType, IModelMemberViewIt
     {
         base.ReadValueCore();
         ComponentModel.Value = (string?)PropertyValue;
-        ComponentModel.LookupItems = (CurrentObject as IStringLookupSource)?.LookupValues(PropertyName, roleNames).ToList() ?? [];
+        ComponentModel.LookupItems = (CurrentObject as IStringLookupSource)?.LookupValues(PropertyName, roleNames, actionNames).ToList() ?? [];
     }
 
     protected override object? GetControlValueCore() => ComponentModel.Value;

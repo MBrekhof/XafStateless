@@ -21,12 +21,15 @@ public class PermissionTests : IClassFixture<TestDb>
 {
     const string Approver = "approver", Designer = "designer", Reader = "reader", Outsider = "outsider", Admin = "admin", Others = "Others";
     readonly TestDb db;
-    readonly WorkflowRuntime rt = new(new DefinitionStore(), TimeProvider.System);
-    readonly DefinitionService svc = new(new DefinitionStore());
+    readonly RefundAction refund = new();
+    readonly WorkflowRuntime rt;
+    readonly DefinitionService svc;
 
     public PermissionTests(TestDb db)
     {
         this.db = db;
+        var actions = new WorkflowActionCatalog([refund]);
+        (rt, svc) = (new(new DefinitionStore(), TimeProvider.System, actions), new(new DefinitionStore(), actions));
         using var os = db.NewObjectSpace();
         if (os.FirstOrDefault<PermissionPolicyRole>(r => r.Name == "Approvers") != null) return;   // one seed per fixture
         var approvers = os.CreateObject<PermissionPolicyRole>();
@@ -141,6 +144,51 @@ public class PermissionTests : IClassFixture<TestDb>
         Assert.Equal("ordered", pr.Workflow!.StateKey);
         Assert.True(pr.Ordered);
         Assert.Equal((TaskState.Decided, Approver), (check.GetObjectByKey<WorkflowTask>(task).State, check.GetObjectByKey<WorkflowTask>(task).DecidedBy));
+    }
+
+    [Fact] public void Action_writes_a_related_record_the_caller_could_not_write()   // XSM-032
+    {
+        // Readers have Read only on PurchaseRequest. A reader cannot Start (no Write), so the initial state's action never runs;
+        // a reader who is in the task's role may decide it, and the ordered state's action then writes a related request through
+        // the command space: the host's capability, not the caller's permission.
+        var def = Fixtures.PurchaseRequest() with { Name = $"pr-{Guid.NewGuid():N}" };
+        def = def with { States = def.States.Select(s => s.Key switch
+        {
+            "draft" => s with { OnEntry = [new(EffectKind.RunAction, "refund", "Draft {Title}")] },
+            "ordered" => s with { OnEntry = [.. s.Effects, new(EffectKind.RunAction, "refund", RefundAction.Title + "{Title}")] },
+            _ => s,
+        }).ToList() };
+        Publish(def);
+        var title = $"Chair {Guid.NewGuid():N}";
+        using var approverProvider = LogOn(Approver, out var approverSecurity);
+        using var approver = approverProvider.CreateObjectSpace();
+        var pr = approver.CreateObject<PurchaseRequest>();
+        (pr.Title, pr.Amount) = (title, 50);
+        approver.CommitChanges();
+
+        using var readerProvider = LogOn(Reader, out var readerSecurity);
+        using var reader = readerProvider.CreateObjectSpace();
+        Assert.False(readerSecurity.IsGranted(new PermissionRequest(reader, typeof(PurchaseRequest), SecurityOperations.Create)));
+        var noWrite = rt.Start(Caller(reader, readerSecurity, Reader, "Approvers"), typeof(PurchaseRequest), pr.ID, def.Name);
+        Assert.Equal((false, 0), (noWrite.Ok, refund.Calls));   // refused before the initial state's action
+        Assert.Contains("requires write access", noWrite.Message);
+
+        var a = Caller(approver, approverSecurity, Approver, "Approvers");
+        Ok(rt.Start(a, typeof(PurchaseRequest), pr.ID, def.Name));
+        Assert.Equal(1, refund.Calls);
+        Ok(rt.Fire(a, typeof(PurchaseRequest), pr.ID, "Submit"));
+        Guid task;
+        using (var check = db.NewObjectSpace()) task = check.GetObjectsQuery<WorkflowTask>().Single(t => t.Instance!.SubjectId == pr.ID && t.State == TaskState.Open).ID;
+
+        var refused = rt.Decide(Caller(reader, readerSecurity, Reader), task, "Approve");   // not in Approvers: refused before any effect
+        Assert.Equal((false, 1), (refused.Ok, refund.Calls));
+
+        Ok(rt.Decide(Caller(reader, readerSecurity, Reader, "Approvers"), task, "Approve"));
+
+        using var after = db.NewObjectSpace();
+        Assert.Equal(2, refund.Calls);
+        Assert.Single(after.GetObjectsQuery<PurchaseRequest>().Where(p => p.Title == RefundAction.Title + title));
+        Assert.Equal("ordered", after.GetObjectByKey<PurchaseRequest>(pr.ID).Workflow!.StateKey);
     }
 
     [Fact] public void Approver_cannot_edit_task_role()

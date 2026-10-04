@@ -15,8 +15,10 @@ public interface IDefinitionValidationListener
 }
 
 /// <summary>The definition lifecycle: new draft, validate, publish, dry run. DefinitionGuard enforces immutability underneath.</summary>
-public sealed class DefinitionService(DefinitionStore store)
+public sealed class DefinitionService(DefinitionStore store, WorkflowActionCatalog? actions = null)
 {
+    readonly WorkflowActionCatalog catalog = actions ?? WorkflowActionCatalog.Empty;
+
     public const string PendingChangesMessage = "Save or cancel your pending changes before publishing.";
     public const string LostRaceMessage = "The definition changed meanwhile (another edit or publish committed first). Reload it and publish again.";
 
@@ -70,7 +72,7 @@ public sealed class DefinitionService(DefinitionStore store)
             var message = $"target type '{d.TargetTypeName}' is not a workflow subject";
             return new(false, [message], [new Finding(message)]);
         }
-        var findings = WorkflowValidator.Check(DefinitionMapper.ToDef(d, os), new XafWorkflowEnvironment(roleNames, target));
+        var findings = WorkflowValidator.Check(DefinitionMapper.ToDef(d, os), new XafWorkflowEnvironment(roleNames, target, catalog.Names));
         return new(findings.Count == 0, findings.Select(f => f.Message).ToArray(), findings);
     }
 

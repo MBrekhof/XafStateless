@@ -29,6 +29,7 @@ public class Startup {
         services.AddHttpContextAccessor();
         services.AddScoped<CircuitHandler, CircuitHandlerProxy>();
         services.AddXafStateless();
+        services.AddSingleton<XafStateless.Module.Services.IWorkflowAction, LogWorkflowAction>();   // the "log" Run action (XSM-032)
         services.AddHostedService<WorkflowTimerService>();
         services.AddHostedService<LogNotificationDispatcher>();
         services.AddXaf(Configuration, builder => {

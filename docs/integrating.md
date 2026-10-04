@@ -369,7 +369,59 @@ foreach (var n in pending)
 os.CommitChanges();
 ```
 
-## 10. Check it
+## 10. Actions (Run action effects)
+
+A **Run action** effect runs code of the host when its state is entered: the way a workflow changes records other than
+its subject (release a student's lesson slots and refund on cancel, archive the file on close). The host writes the
+action and registers it; the designer picks it by name; the validator refuses a name the host has not registered.
+
+```csharp
+using XafStateless.Module.Services;
+
+public sealed class ReleaseSlotsAction(ILogger<ReleaseSlotsAction> log) : IWorkflowAction
+{
+    public string Name => "release-slots";            // the Target the designer picks
+
+    public void Run(WorkflowActionContext context)    // context: ObjectSpace, Subject, Argument
+    {
+        var student = (Student)context.Subject;       // its Workflow is the instance, already in the entered state
+        foreach (var slot in context.ObjectSpace.GetObjectsQuery<LessonSlot>().Where(s => s.Student!.ID == student.ID && s.Date > DateTime.Today))
+            slot.Student = null;                      // staged; committed with the state change
+        log.LogInformation("{Argument}", context.Argument);   // the effect's Value, placeholders filled: "Released {Name}'s slots"
+    }
+}
+
+// Startup.ConfigureServices, before or after AddXafStateless():
+services.AddSingleton<IWorkflowAction, ReleaseSlotsAction>();
+```
+
+The demo registers one action, `log` (`XafStateless.Demo.Blazor.Server/Services/LogWorkflowAction.cs`), which only logs.
+
+**Actions are trusted host code.** `Run` executes inside the workflow command, and `context.ObjectSpace` is the command's
+own non-secured object space: what the action stages there commits with the state change and rolls back with it, in one
+transaction, and is not checked against the caller's permissions (a reader who may decide a task can trigger an action
+that writes rows they could not). Publishing a definition with a Run action delegates that capability to the designer.
+The contract an action keeps, because nothing enforces it:
+
+- It only stages changes. The runtime owns saving and the object space's lifetime: no `CommitChanges`, `Rollback`,
+  `Refresh` or `Dispose` on the context's object space, no writes on another connection.
+- It finishes before it returns: no `async void`, no background use of the context. Actions are singletons: thread-safe,
+  keeping nothing from a command, no scoped constructor dependencies.
+- It leaves the workflow's own rows alone: instances, tasks, notifications, the subject's `Workflow` link. It runs with
+  the runtime's write permit, so the guards cannot tell its writes from the runtime's.
+- It does not change the subject's locked members. The lock guard refuses that, unless a Set field or Increment of the
+  same state writes the member too (their exemption covers the whole command). Change the subject with those effects.
+- An exception aborts the command with nothing committed; a `UserFriendlyException` reaches the user as the message,
+  other exceptions propagate (the timer collects them). A command is retried on a lost race, up to four attempts, so an
+  action can run more than once while only the last attempt commits: external side effects (mail, a payment, a job on
+  another connection) belong in an outbox row the host delivers, like notifications (step 9), never in the action.
+
+`WorkflowActionCatalog` (registered by `AddXafStateless`) collects the actions; two with the same name, or one with an
+empty name, fail when the catalog is first resolved (the first command, validation or designer lookup). A host that wants
+that at startup resolves the catalog there. A definition whose action a later host version no longer registers fails at
+runtime with "workflow action '…' is not registered in this application", committing nothing.
+
+## 11. Check it
 
 Run the host, log on as a designer, and open **Workflow > Workflow Definition**. Create a definition for the subject
 class and publish it: the diagram draws under the States and Transitions tabs. Then, as a participant, open a subject

@@ -29,8 +29,10 @@ public sealed record WorkflowCaller(string Name, Func<string, bool> InRole, IObj
 /// Entry points split by who may cause them: Fire leaves Manual states, Decide leaves Task states, RunDueTimers leaves Wait
 /// states, Decision states leave automatically.
 /// </summary>
-public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
+public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, WorkflowActionCatalog? actions = null)
 {
+    readonly WorkflowActionCatalog catalog = actions ?? WorkflowActionCatalog.Empty;
+
     public const int MaxAttempts = 4;
     public const string LinkMismatch = "workflow link mismatch";
     public const string AlreadyDecided = "already decided";
@@ -278,8 +280,13 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
                     (note.Instance, note.State, note.CreatedUtc) = (instance, NotificationState.Pending, now);
                     if (toRequester) (note.UserId, note.UserName) = (instance.StartedById, instance.StartedBy);
                     else note.Role = effect.Target;
-                    note.Body = XafWorkflowEnvironment.Placeholder().Replace(effect.Value, m =>
-                        Convert.ToString(x.Type.FindMember(m.Groups[1].Value)?.GetValue(x.Subject), CultureInfo.InvariantCulture) ?? "");
+                    note.Body = Fill(x, effect.Value);
+                    break;
+                case EffectKind.RunAction:
+                    // Trusted host code inside this command (see IWorkflowAction): its writes through x.Os commit with the transition.
+                    var action = catalog.Find(effect.Target)
+                                 ?? throw new InvalidOperationException($"workflow action '{effect.Target}' is not registered in this application");
+                    action.Run(new WorkflowActionContext(x.Os, x.Subject, Fill(x, effect.Value ?? "")));   // no argument is ""
                     break;
                 default:
                     throw new InvalidOperationException($"unknown effect kind {effect.Kind}");
@@ -297,6 +304,11 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock)
                 break;
         }
     }
+
+    /// <summary>A Notify body or an action argument: its {Member} placeholders read from the subject. A null Notify body throws, as
+    /// before (validation refuses it; only a definition that bypassed validation has one).</summary>
+    static string Fill(Cmd x, string template) => XafWorkflowEnvironment.Placeholder().Replace(template, m =>
+        Convert.ToString(x.Type.FindMember(m.Groups[1].Value)?.GetValue(x.Subject), CultureInfo.InvariantCulture) ?? "");
 
     /// <summary>A SetField or Increment write of one subject member, exempted from StateLockGuard for this member only; keyed by
     /// the EF entity type (never a proxy type), as the guard keys it.</summary>

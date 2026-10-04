@@ -4,8 +4,10 @@ public enum StateKind { Manual, Task, Wait, Decision, Final }
 
 /// <summary>Notify: Target = role or <see cref="EffectDef.Requester"/>, Value = text with {Member} placeholders. SetField: Target = member,
 /// Value = the new value as text. Increment: Target = a whole-number or decimal member, Value = the step as text ("" = 1), so a
-/// workflow can count attempts and a Decision can limit them (XSM-031).</summary>
-public enum EffectKind { Notify, SetField, Increment }
+/// workflow can count attempts and a Decision can limit them (XSM-031). RunAction: Target = the name of an action the host
+/// registered, Value = its argument with {Member} placeholders; the action runs in the transition's commit and may change
+/// other records than the subject (XSM-032).</summary>
+public enum EffectKind { Notify, SetField, Increment, RunAction }
 
 public sealed record EffectDef(EffectKind Kind, string Target, string Value)
 {
