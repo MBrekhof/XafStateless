@@ -98,11 +98,11 @@ public class Updater : ModuleUpdater {
         [
             new("draft", "Draft", StateKind.Manual),
             new("approval", "Approval", StateKind.Task, TaskRole: "Approvers",
-                OnEntry: [new(EffectKind.Notify, "Approvers", "Please approve {Title}")], Locked: ["Amount"]),   // the amount under approval cannot change
+                OnEntry: [new(EffectKind.Notify, "Approvers", "Please approve {Title}")], Locked: [nameof(PurchaseRequest.Amount)]),   // the amount under approval cannot change
             new("decide-amount", "Amount check", StateKind.Decision),
             new("wait-cooling", "Cooling-off", StateKind.Wait, WaitMinutes: 1),
             new("ordered", "Ordered", StateKind.Final,
-                OnEntry: [new(EffectKind.SetField, "Ordered", "true"), new(EffectKind.Notify, EffectDef.Requester, "Your request {Title} was ordered")]),
+                OnEntry: [new(EffectKind.SetField, nameof(PurchaseRequest.Ordered), "true"), new(EffectKind.Notify, EffectDef.Requester, "Your request {Title} was ordered")]),
             new("rejected", "Rejected", StateKind.Final, OnEntry: [new(EffectKind.Notify, EffectDef.Requester, "Your request {Title} was rejected")]),
         ],
         [
