@@ -26,6 +26,10 @@ public class Program : IDesignTimeApplicationFactory {
         }
         else {
             DevExpress.ExpressApp.Blazor.Editors.LookupPropertyEditor.DefaultUseViewMode = true;
+            // XAF 26.1 caps open tabs at 10 and silently refuses an eleventh view; a demo session with a few requests, tasks
+            // and the entry screen passes that. Oldest tab closes instead of blocking.
+            DevExpress.ExpressApp.Blazor.BlazorMdiShowViewStrategy.MaxTabLimit = 30;
+            DevExpress.ExpressApp.Blazor.BlazorMdiShowViewStrategy.TabOverflowStrategy = DevExpress.ExpressApp.Blazor.TabOverflowStrategy.CloseLeastRecentTab;
             DevExpress.ExpressApp.FrameworkSettings.DefaultSettingsCompatibilityMode = DevExpress.ExpressApp.FrameworkSettingsCompatibilityMode.Latest;
             DevExpress.ExpressApp.Security.SecurityStrategy.AutoAssociationReferencePropertyMode = DevExpress.ExpressApp.Security.ReferenceWithoutAssociationPermissionsMode.AllMembers;
             IHost host = CreateHostBuilder(args).Build();

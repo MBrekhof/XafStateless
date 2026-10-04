@@ -30,8 +30,9 @@ Docs: `README.md`, `docs/integrating.md` (host contract, steps 1–12), `docs/ho
 ## Things learned (keep)
 
 - **XAF 26.1 Blazor restores a user's open tabs at the next login and caps them at 10** (`BlazorMdiShowViewStrategy.MaxTabLimit`;
-  an eleventh view silently does not open). The E2E tests therefore run in a fixed order (`[Order]`) and the entry-screen
-  test closes restored tabs first (`CloseAllTabs`). A view opened for an object already open in another tab is skipped in
+  an eleventh view silently does not open). The demo raises the cap to 30 and closes the oldest tab instead of blocking
+  (`Program.cs`); the E2E tests still run in a fixed order (`[Order]`) and the entry-screen test closes restored tabs
+  first (`CloseAllTabs`), so they stay valid on a host with the default. A view opened for an object already open in another tab is skipped in
   favour of that (stale) tab: the Start controller opens the request in the screen's own tab (`TargetWindow.Current`).
 - The E2E cycle, in one go (PowerShell or bash, from the repo root): drop `XafStatelessE2E`, run the demo exe with
   `--updateDatabase --forceUpdate --silent` and the E2E connection string, start it on :5000 with the same string, wait for
