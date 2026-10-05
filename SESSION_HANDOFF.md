@@ -1,4 +1,15 @@
-# Session handoff — 2026-10-04
+# Session handoff — 2026-10-05
+
+## This session (2026-10-05): XSM-034, the public-readiness pass (`a4c1c03`, Review)
+
+Martin decided the repo will become public. The tree was scrubbed of shop-internal context (private host product,
+sibling project, machine paths, board, tool-skill and `ponytail:` markers); `docs/host-trial.md` is host-neutral and
+five screenshots that showed the host's name are gone; `docs/superpowers/plans` is now `docs/plans`; the architecture
+PNGs were regenerated. No history rewrite (the scan found no secrets). Kept on purpose: Author metadata, repo URLs,
+XSM ids in code, Codex attributions in docs, and this file. Still Martin's call before going public: whether this
+handoff file stays in a public tree, and whether the packages move from the private GitHub feed to nuget.org.
+
+# Previous session — 2026-10-04
 
 ## Where things stand
 
