@@ -47,7 +47,7 @@ public static class WorkflowCommand
     /// <summary>The object space of <paramref name="os"/> that holds <paramref name="subjectType"/>: <paramref name="os"/> itself when
     /// it knows the type by itself, else the first additional object space of the composite (an entry screen's non-persistent
     /// space, populated by the host) that knows it. Never CanInstantiate: on a composite it answers through the additional spaces
-    /// and would hand back the composite (Codex, 2026-10-04). With <paramref name="securityConfigured"/> the result must be an
+    /// and would hand back the composite. With <paramref name="securityConfigured"/> the result must be an
     /// <see cref="ISecuredObjectSpace"/>; a plain space is accepted only in an application without security.</summary>
     internal static IObjectSpace SpaceFor(IObjectSpace os, Type subjectType, bool securityConfigured)
     {

@@ -1,12 +1,12 @@
-# XafStateless as NuGet packages on the private feed (BPG WF-008 step 1, CARD-1869)
+# XafStateless as NuGet packages on the private feed (CARD-1869)
 
-BPG's WF-008 adopts XafStateless as the workflow engine of generated apps. Generated apps restore from packages, not
+The first consumer is an app generator that adopts XafStateless as the workflow engine of its generated apps. Generated apps restore from packages, not
 project references (as with XafLayoutBuilder: the private GitHub Packages feed
 `https://nuget.pkg.github.com/MBrekhof/index.json`). `docs/integrating.md` still says "there is no NuGet package yet".
 
 ## Change (mirrors XafLayoutBuilder's setup)
 
-- `Directory.Build.props`: `DevExpressPackageRange` `[26.1.4,26.2)` (BPGDemo and the demo pin 26.1.4;
+- `Directory.Build.props`: `DevExpressPackageRange` `[26.1.4,26.2)` (the first host and the demo pin 26.1.4;
   26.2 assemblies must never mix with 26.1); `IsPackable` false by default; `PackageVersion` 0.1.0 (bump on every push —
   XAF records module assembly versions in the application database and refuses a lower one); Authors, MIT licence,
   project/repository URL, tags.

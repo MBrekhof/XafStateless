@@ -48,9 +48,9 @@ secured object space, never the subject's other members.
 
 The host's AI setup, not a second stack in the module:
 
-- BPGDemo (and so BPG's generated apps) already has an **`AiSettings`** entity and a **`TornadoClientFactory`**, and
-  bpg AI-001 plans the XafTornado assistant for generated apps. The module would define one small interface (for example
-  `IWorkflowDraftAssistant.Propose(prompt, context) -> WorkflowDef JSON`) and the host implements it on its own client.
+- A host that already has an AI client and a settings entity for its credentials (the trial host does) implements one
+  small interface the module defines (for example `IWorkflowDraftAssistant.Propose(prompt, context) -> WorkflowDef JSON`)
+  on its own client.
 - Credentials stay where the host keeps them (encrypted in its database, managed in its settings UI), never in an
   environment variable or in this module.
 - Without a registered implementation the designer shows no AI actions: the module works exactly as today.
@@ -68,5 +68,6 @@ The host's AI setup, not a second stack in the module:
 - Which model and provider the host uses, and whether the answer must be forced into JSON by the provider (structured
   output) or parsed and re-asked on failure.
 - Whether "draft from a sentence" should also propose the subject type's missing members, or stop at what exists.
-- Whether the same generator serves bpg WF-008 (spec workflow to seeded definition), which would make the JSON contract
-  the shared piece between BPG and this module. That is the main reason to design it once.
+- Whether a host's own spec-to-definition generator (a specification turned into a seeded definition) uses the same
+  JSON contract, which would make it the shared piece between generator and module. That is the main reason to design
+  it once.

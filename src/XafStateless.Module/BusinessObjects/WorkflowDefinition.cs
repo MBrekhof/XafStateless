@@ -37,7 +37,7 @@ public class WorkflowDefinition : BaseObject, IStringLookupSource
 
     /// <summary>A definition made with the New action never passes through NewDraft: number it here, max+1 per name. The
     /// number is recomputed on every save while the object is new, so a refused save followed by a rename is renumbered.
-    /// ponytail: two new drafts of one name in one commit both get max+1; the one-draft-per-name index refuses that anyway.</summary>
+    /// Kept simple: two new drafts of one name in one commit both get max+1; the one-draft-per-name index refuses that anyway.</summary>
     public override void OnSaving()
     {
         base.OnSaving();

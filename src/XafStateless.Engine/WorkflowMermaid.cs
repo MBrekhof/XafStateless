@@ -24,7 +24,7 @@ public static class WorkflowMermaid
     public static string StyleOf(StateKind kind) => KindStyle[kind];
 
     // Our own stateDiagram-v2 text straight from the definition. It needs no machine, so a broken draft still draws.
-    // ponytail: own formatter instead of Stateless.Graph.MermaidGraph, because its escaping of spaces is unverified
+    // Kept simple: own formatter instead of Stateless.Graph.MermaidGraph, because its escaping of spaces is unverified
     // and it needs a constructible machine.
     public static string Format(WorkflowDef def, DiagramStyle? style = null)
     {

@@ -51,8 +51,8 @@ Option (b), "enqueue a host job by name", is a special case: a host action can e
   ILogger; registered in Startup. The seeded v1 is unchanged. The E2E designer journey picks Kind "Run action" and
   Target "log".
 
-Not done: a demo with related records to compensate (the demo has none); BPG's mapping to its automation actions (bpg
-board); async actions (Run is synchronous, inside the command).
+Not done: a demo with related records to compensate (the demo has none); the consuming generator's mapping to its own automation actions (its
+own work); async actions (Run is synchronous, inside the command).
 
 ## Tests (Codex review 2026-10-04 added 2b, 2c, 4b, 7, 8)
 

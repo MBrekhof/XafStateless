@@ -21,7 +21,7 @@ Docs: `README.md`, `docs/integrating.md` (host contract, steps 1–12), `docs/ho
   `WorkflowCommand.Caller(app, os, subjectType)`: a screen's command must carry the user's **secured** object space,
   resolved behind the non-persistent one; otherwise the runtime's Write check is skipped (Codex caught that
   `CanInstantiate` would return the composite; `IsKnownType(type, false)` is used). integrating.md step 11.
-- **XSM-030 (Todo, design only, awaiting Martin)**: `docs/superpowers/plans/2026-10-04-xsm-030-fork-join-design.md`.
+- **XSM-030 (Todo, design only, awaiting Martin)**: `docs/plans/2026-10-04-xsm-030-fork-join-design.md`.
   Option A (branches as child instances) recommended by me and Codex; Codex's cost 7–10 days, not my 4–5; its smallest
   honest slice and the decisions Martin must take are on the card and in the note. **No code written.**
 - Smaller: the demo seed uses `nameof(PurchaseRequest.Amount)` / `Ordered` (`5aeea01`); Admin only decides tasks after a

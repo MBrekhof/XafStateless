@@ -347,7 +347,7 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         Assert.Contains(svc.Validate(os, d, Roles()).Findings!, f => f.State == "rejected");
     }
 
-    [Fact] public void Failed_New_renamed_and_retried_is_renumbered()   // XSM-018 (Codex): a refused save must not pin the number
+    [Fact] public void Failed_New_renamed_and_retried_is_renumbered()   // XSM-018: a refused save must not pin the number
     {
         var (taken, fresh) = (Unique(), Unique());
         using (var seed = db.NewObjectSpace()) { Draft(seed, taken); seed.CommitChanges(); }   // 'taken' has draft v1

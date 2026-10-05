@@ -4,7 +4,7 @@ using XafStateless.Module.BusinessObjects;
 namespace XafStateless.Demo.Blazor.Server;
 
 /// <summary>Delivers the outbox: every 30 s, each Pending notification is logged and marked Sent.</summary>
-// ponytail: log sink; a host plugs its own mail delivery in here
+// Kept simple: log sink; a host plugs its own mail delivery in here
 public sealed class LogNotificationDispatcher(IServiceScopeFactory scopes, ILogger<LogNotificationDispatcher> log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

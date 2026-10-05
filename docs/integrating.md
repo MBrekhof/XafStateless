@@ -22,8 +22,8 @@ only asks for 8.0.28 or higher, and these keep the host's whole EF Core family o
 tests use `ProjectReference`s to the same projects.
 
 **Schema.** The package ships no migration. The seven workflow tables come from XAF's schema update, so after adding the
-package (or moving to a new version) run the host once with its database update switch (BPGDemo-based apps:
-`--updateDatabase`); outside a debugger a schema mismatch otherwise stops the app at startup.
+package (or moving to a new version) run the host once with its database update switch (XAF's
+`--updateDatabase` switch); outside a debugger a schema mismatch otherwise stops the app at startup.
 
 ## 2. Modules
 
@@ -95,7 +95,7 @@ draft does not block its replacement.
 
 **`UseDeferredDeletion(this)` is required too.** `BaseObject.GCRecord` is `[NotMapped]` until deferred deletion maps
 it, and both the index filters and `DefinitionGuard` read that column. New XAF apps have the call in the generated
-DbContext (the demo and the BPGDemo skeleton both do); a host that removed it would fail at schema creation. (Read in
+DbContext (the demo and the trial host both do); a host that removed it would fail at schema creation. (Read in
 code; not tried on a host without it.)
 
 ### The two guards
@@ -328,8 +328,8 @@ Register it with `services.AddHostedService<WorkflowTimerService>();`.
 
 Any scheduler the host already runs works the same way. For example, a **Hangfire recurring job** (cron `* * * * *`)
 whose job method opens a scope and calls `RunDueTimers` with an `INonSecuredObjectSpaceFactory` from that scope. Run one
-scheduler, not both. `docs/host-trial.md` shows this on a host with a command/handler job framework (the BPGDemo
-skeleton), where Hangfire's activator already gives each job run its own scope.
+scheduler, not both. `docs/host-trial.md` shows this on a host with a command/handler job framework (the trial
+host), where Hangfire's activator already gives each job run its own scope.
 
 ## 9. Notification delivery
 

@@ -346,7 +346,7 @@
       "dot": "amber",
       "title": "Host",
       "items": [
-        "BPGDemo trial: added by following the docs",
+        "Host trial: added by following the docs",
         "Role grants repeat safely on every update"
       ]
     }

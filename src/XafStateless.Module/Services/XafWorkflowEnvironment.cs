@@ -19,7 +19,7 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
         CriteriaOperator op;
         try { op = CriteriaOperator.Parse(criteria); }
         catch (CriteriaParserException ex) { return ex.Message; }
-        // ponytail: first-level operands only; members inside aggregate scopes ([Items][...]) are not resolved.
+        // Kept simple: first-level operands only; members inside aggregate scopes ([Items][...]) are not resolved.
         var unknown = CollectFirstLevelPropertiesHelper.Collect(op).Select(p => p.PropertyName).FirstOrDefault(n => target.FindMember(n) == null);
         return unknown == null ? null : $"'{unknown}' is not a member of {target.Name}";
     }

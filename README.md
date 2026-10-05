@@ -19,7 +19,7 @@ and Dry run stay disabled until everything is fixed.
 
 ## Compared with XAF's StateMachine module
 
-XAF's built-in StateMachine module was checked against dxdocs pages 113713, 113714 and 113715.
+XAF's built-in StateMachine module was checked against the DevExpress documentation ([113713](https://docs.devexpress.com/eXpressAppFramework/113713), [113714](https://docs.devexpress.com/eXpressAppFramework/113714) and [113715](https://docs.devexpress.com/eXpressAppFramework/113715)).
 
 | | XAF StateMachine | XafStateless |
 |---|---|---|
@@ -85,20 +85,21 @@ Coverage:
   request passes Finance while a v1 request started earlier does not. A second test picks the target type of a new
   definition.
 
-Host trial: the module was added to the BPGDemo skeleton by following [docs/integrating.md](docs/integrating.md), with no
-module change; results and findings are in [docs/host-trial.md](docs/host-trial.md). There is no NuGet package yet. Open
-work lives on ContextBoard, project **XafStateless**.
+Host trial: the module was added to a second XAF host (its own job framework, Hangfire, Web API) by following
+[docs/integrating.md](docs/integrating.md), with no module change; results and findings are in
+[docs/host-trial.md](docs/host-trial.md). Packages: see [docs/integrating.md](docs/integrating.md) §1.
 
 ## How to run
 
 Requirements: Windows, the .NET 10 SDK, SQL Server LocalDB (`(localdb)\mssqllocaldb`), and DevExpress 26.1.4 packages
 on the NuGet feed.
 
+From the repository root, in PowerShell:
+
 ```powershell
-cd C:\Projects\XafStateless
 dotnet build XafStateless.slnx
 
-cd C:\Projects\XafStateless\demo\XafStateless.Demo.Blazor.Server\bin\Debug\net10.0
+cd demo\XafStateless.Demo.Blazor.Server\bin\Debug\net10.0
 # first run only: create and seed the XafStatelessDemo database
 .\XafStateless.Demo.Blazor.Server.exe --updateDatabase --forceUpdate --silent --environment Development
 .\XafStateless.Demo.Blazor.Server.exe --urls http://localhost:5000 --environment Development
@@ -123,8 +124,9 @@ sqlcmd -S "(localdb)\mssqllocaldb" -Q "ALTER DATABASE XafStatelessDemo SET SINGL
 
 ### Tests
 
+From the repository root:
+
 ```powershell
-cd C:\Projects\XafStateless
 dotnet test XafStateless.slnx                  # engine + module (LocalDB)
 
 # E2E: needs a freshly seeded database and the demo running on http://localhost:5000 (see above)

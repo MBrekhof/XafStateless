@@ -1,7 +1,7 @@
 # XSM-031: Increment effect (attempt-limited loops)
 
 Card: XSM-031 (CARD-1922). Decision: option (a) from the card, a counter effect. Option (b), expression values in
-Set field, is out: it needs an expression evaluator on the subject and a BPG change (its judge rejects `=` values).
+Set field, is out: it needs an expression evaluator on the subject and a change in the consuming generator (its validator rejects `=` values).
 
 ## Design
 
@@ -28,7 +28,7 @@ Set field, is out: it needs an expression evaluator on the subject and a BPG cha
 - Demo: `PurchaseRequest.Revisions` (`int?`, "times sent back"), the real nullable counter the tests need; the seeded
   v1 does not use it (a designer can, in a new version).
 
-Not done: Mermaid (effects are not drawn), BPG's judge (bpg board).
+Not done: Mermaid (effects are not drawn); the consuming generator's validator is its own work.
 
 ## Tests (Module tests, LocalDB; Codex review 2026-10-04 added 2, 5, 6, 7)
 

@@ -1,7 +1,5 @@
 # XafStateless Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** A drop-in XAF module in which end users define workflows as data: they add states, draw transitions, and pick what each state does from a fixed set of step types. The module versions the definitions, validates them before publish, runs them on Stateless, and draws them from the same definition. It must be packaged so the target host application can add it the way it already adds XafLayoutBuilder.
 
 **Architecture:** There are three layers. `XafStateless.Engine` is pure .NET and depends only on Stateless: definition records, the validator, the machine builder, the dry run and Mermaid export. Every rule lives here and is unit-tested without a database. `XafStateless.Module` is the XAF/EF Core module: entities, the immutability interceptor, the publish lifecycle, the runtime (start, fire, decide, timers, effects), and the controllers. `XafStateless.Blazor` renders the diagram. A small generated XAF Blazor app (`demo/`) hosts it, and a trial integration into the target host application proves it is reusable.
@@ -63,7 +61,7 @@ Checked against the dxdocs pages 113713, 113714 and 113715.
   - Administrators: everything.
   - WorkflowDesigners: CRUD on `WorkflowDefinition`, `WorkflowState`, `WorkflowTransition` and `WorkflowEffect`; navigation to Definitions.
   - Approvers (and any subject user): CRUD on the subject class, **except** its `Workflow` member, which the guard enforces; **read-only** on `WorkflowInstance`, `WorkflowTask` and `WorkflowNotification`; read on `WorkflowDefinition` and its children (needed to show state captions); navigation to Tasks and to the subject's list view (the host passes the subject's navigation item id).
-  - **Role names** are never read through the user's secured space: standard XAF roles deny role reads. The role lookup (`LookupValues`) and `XafWorkflowEnvironment.RoleExists` go through `WorkflowRoleCatalog`, which reads role names with a **non-secured** object space, the same approach WLNCentral's TagBox editor uses for its lookups. Role names are not sensitive, but the catalogue exposes names only, never role objects.
+  - **Role names** are never read through the user's secured space: standard XAF roles deny role reads. The role lookup (`LookupValues`) and `XafWorkflowEnvironment.RoleExists` go through `WorkflowRoleCatalog`, which reads role names with a **non-secured** object space, the same approach as an existing production TagBox editor. Role names are not sensitive, but the catalogue exposes names only, never role objects.
   - All runtime writes go through the non-secured command object space.
 - **Members usable by effects and locks** come from one shared helper, `WorkflowMembers.Supported(ITypeInfo)`, used by the lookup, `CheckEffect`, `CheckMember` and the runtime. A member qualifies when it is public, persistent, writable, browsable, and a scalar type (string, numeric, bool, DateTime, Guid, enum; nullable variants included). The helper **excludes** the key (`ID`), `Workflow`, the optimistic-lock field, references and collections.
 - The engine never touches XAF. Criteria, roles and field checks reach it through `IWorkflowEnvironment` (validation) and `Func<string, bool>` (guards).
@@ -72,12 +70,12 @@ Checked against the dxdocs pages 113713, 113714 and 113715.
 
 - TFM `net10.0` for every project. `<Nullable>enable</Nullable>` and `<ImplicitUsings>enable</ImplicitUsings>` go in `Directory.Build.props`.
 - DevExpress packages are exactly `26.1.4`. EF Core packages are exactly `10.0.10`. Stateless is exactly `5.20.1`. No floating versions.
-- The database is SQL Server (LocalDB in development and tests), because it matches the target host application. The filtered indexes use SQL Server `HasFilter` syntax (`ponytail: SQL Server only; Postgres filter syntax differs — add a provider switch if a non-SQL-Server host appears`).
+- The database is SQL Server (LocalDB in development and tests), because it matches the target host application. The filtered indexes use SQL Server `HasFilter` syntax (`Kept simple: SQL Server only; Postgres filter syntax differs — add a provider switch if a non-SQL-Server host appears`).
 - `XafStateless.Engine` references **only** Stateless. No DevExpress and no EF.
 - `XafStateless.Module` must not reference Hangfire, MailKit or any host project. The host wires timers and notification delivery.
-- The subject key is `Guid`, matching XAF `BaseObject` (`ponytail: Guid-keyed subjects only; add a string SubjectKey if a BaseObjectInt host appears`).
+- The subject key is `Guid`, matching XAF `BaseObject` (`Kept simple: Guid-keyed subjects only; add a string SubjectKey if a BaseObjectInt host appears`).
 - Configuration lives in code or appsettings, never in environment variables.
-- Entities follow `xaf-tools:xaf-efcore-entities`: virtual properties, collections initialized as `ObservableCollection`, and a `DbSet` registered for every entity.
+- Entities follow the XAF EF Core rules: virtual properties, collections initialized as `ObservableCollection`, and a `DbSet` registered for every entity.
 - Controllers follow `xaf-viewcontroller-patterns`: subscribe in `OnActivated` and unsubscribe in `OnDeactivated`, with no `async void`.
 - Commits cite the task's card (`XSM-0NN`, minted after plan approval). Stage explicit paths only, never `git add -A` or `-am`.
 
@@ -617,7 +615,7 @@ public class WorkflowMachineTests
 }
 ```
 - [ ] **Step 2: Run them and confirm they fail.**
-- [ ] **Step 3: Implement it.** `WorkflowMermaid.Format` is about 15 lines of `StringBuilder` (`ponytail: own formatter instead of Stateless.Graph.MermaidGraph, because its escaping of spaces is unverified and it needs a constructible machine`). Task 8 confirms in the browser that the output renders. `Available()` returns `[]` unless the current state's Kind is Manual or Task, and otherwise returns `def.From(state).Where(t => t.Criteria is null || criteria(t.Criteria))`. `WorkflowDryRun.Run` keeps state in a local variable, calls `EnterInitial()`, then calls `Fire` on each trigger inside a try/catch, returning the steps taken so far together with `ex.Message`.
+- [ ] **Step 3: Implement it.** `WorkflowMermaid.Format` is about 15 lines of `StringBuilder` (`Kept simple: own formatter instead of Stateless.Graph.MermaidGraph, because its escaping of spaces is unverified and it needs a constructible machine`). Task 8 confirms in the browser that the output renders. `Available()` returns `[]` unless the current state's Kind is Manual or Task, and otherwise returns `def.From(state).Where(t => t.Criteria is null || criteria(t.Criteria))`. `WorkflowDryRun.Run` keeps state in a local variable, calls `EnterInitial()`, then calls `Fire` on each trigger inside a try/catch, returning the steps taken so far together with `ex.Message`.
 - [ ] **Step 4: Run them and confirm they pass.**
 - [ ] **Step 5: Commit** — `Engine: Stateless machine, decision chain, dry run, Mermaid (XSM-003)`.
 
@@ -632,8 +630,6 @@ public class WorkflowMachineTests
 - Create: `demo/XafStateless.Demo.Module/BusinessObjects/PurchaseRequest.cs`
 - Modify: `demo/XafStateless.Demo.Module/BusinessObjects/*DbContext.cs` (DbSets + `ConfigureXafStateless()`), `demo/XafStateless.Demo.Module/Module.cs` (RequiredModuleTypes)
 - Create: `tests/XafStateless.Module.Tests/XafStateless.Module.Tests.csproj`, `tests/XafStateless.Module.Tests/TestDb.cs`, `tests/XafStateless.Module.Tests/SchemaTests.cs`
-
-Invoke `xaf-tools:xaf-efcore-entities` before writing the entities.
 
 **Interfaces:**
 - Produces (namespace `XafStateless.Module.BusinessObjects`; all entities derive from `DevExpress.Persistent.BaseImpl.EF.BaseObject`, so the key is `Guid ID`):
@@ -898,7 +894,7 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock) {
 - [ ] **Step 2: Run them and confirm they fail.**
 - [ ] **Step 3: Implement it.** (`LostRace` was ported in Task 4 from the earlier proof of concept's `driver/DrivingSchoolAdministration/DrivingSchoolAdministration.Blazor.Server/Workflow/TaskDecisionService.cs` lines 97-105, `IsLostRace`.) Register `WorkflowRuntime` in `AddXafStateless()`. Take the shape of `RunDueTimers` from `Handlers/JourneyTimersHandler.cs` / `JourneyBaseline.RunTimers()`: due ids in id order, one object space and commit each, the retry and skip rules above, and collect other failures into an `AggregateException` that is rethrown.
 - [ ] **Step 4: Run them and confirm they pass.**
-- [ ] **Step 5: Add a timer host to the demo.** `demo/XafStateless.Demo.Blazor.Server/WorkflowTimerService.cs : BackgroundService` uses a `PeriodicTimer` of 30 s and calls `runtime.RunDueTimers(() => nonSecuredFactory.CreateNonSecuredObjectSpace<WorkflowInstance>())`. Verify `INonSecuredObjectSpaceFactory` with dxdocs, including its DI lifetime: if it is scoped, the service creates a scope per tick. Here, only check that the exe starts and logs one tick without errors. The **end-to-end timer check** (a large-amount request reaching `ordered` within about 90 s) moves to Task 7 Step 4, where the controllers and seed exist. A second service, `LogNotificationDispatcher : BackgroundService`, marks Pending notifications Sent and logs them (`ponytail: log sink; the target host application plugs MailKit in Task 10`).
+- [ ] **Step 5: Add a timer host to the demo.** `demo/XafStateless.Demo.Blazor.Server/WorkflowTimerService.cs : BackgroundService` uses a `PeriodicTimer` of 30 s and calls `runtime.RunDueTimers(() => nonSecuredFactory.CreateNonSecuredObjectSpace<WorkflowInstance>())`. Verify `INonSecuredObjectSpaceFactory` with dxdocs, including its DI lifetime: if it is scoped, the service creates a scope per tick. Here, only check that the exe starts and logs one tick without errors. The **end-to-end timer check** (a large-amount request reaching `ordered` within about 90 s) moves to Task 7 Step 4, where the controllers and seed exist. A second service, `LogNotificationDispatcher : BackgroundService`, marks Pending notifications Sent and logs them (`Kept simple: log sink; the target host application plugs MailKit in Task 10`).
 - [ ] **Step 6: Commit** — `Module: runtime — start, fire, decide, timers, effects (XSM-006)`.
 
 ---
@@ -913,8 +909,6 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock) {
 - Modify: the entities, to add `[Appearance]` rules per Kind, `RuleRequiredField` where needed, `[EditorAlias]` on the lookup strings, and `IStringLookupSource`
 - Modify: `demo/XafStateless.Demo.Blazor.Server` (reference `XafStateless.Blazor` and register `XafStatelessBlazorModule`)
 - Test: `tests/XafStateless.Module.Tests/PermissionTests.cs` (required), `ControllerSmokeTests.cs` (optional; the E2E in Task 9 is the real check)
-
-Invoke `xaf-viewcontroller-patterns`, `xaf-tools:xaf-conditional-appearance` and `xaf-tools:xaf-security` first.
 
 **Interfaces:**
 - Consumes: `DefinitionService` (Task 5) and `WorkflowRuntime` (Task 6).
@@ -950,7 +944,7 @@ Invoke `xaf-viewcontroller-patterns`, `xaf-tools:xaf-conditional-appearance` and
   - hide `Order` unless the from-state is Decision.
 - **String lookups: custom Blazor property editors** (settled with the user 2026-09-25, option b; dxdocs 404597 confirms `DataSourceProperty` does not do this, and prescribes a `BlazorPropertyEditorBase` with a `DxComboBoxModel<string,string>`). The model stays string-keyed.
   - Module, UI-free, in `Services/StringLookup.cs`:
-    - `public interface IStringLookupSource { IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames); }`. The **editor** supplies `roleNames`: `WorkflowRoleCatalog.Names(...)` over a non-secured object space from `application.ServiceProvider` (`IComplexViewItem.Setup`, as in WLNCentral's TagBox editor). The entities therefore never query roles through the designer's secured space, and do not need `IObjectSpaceLink` for roles.
+    - `public interface IStringLookupSource { IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames); }`. The **editor** supplies `roleNames`: `WorkflowRoleCatalog.Names(...)` over a non-secured object space from `application.ServiceProvider` (`IComplexViewItem.Setup`, as in that TagBox editor). The entities therefore never query roles through the designer's secured space, and do not need `IObjectSpaceLink` for roles.
     - `public static class StringLookup { public const string Single = "XafStateless.StringLookup"; public const string Multi = "XafStateless.StringMultiLookup"; }`
     - The entities implement `IStringLookupSource`. Members come from `WorkflowMembers.Supported`:
       - `WorkflowDefinition.InitialStateKey` → the definition's state keys;
@@ -961,12 +955,12 @@ Invoke `xaf-viewcontroller-patterns`, `xaf-tools:xaf-conditional-appearance` and
     - Each such property gets `[EditorAlias(StringLookup.Single)]`.
   - Blazor, `Editors/StringLookupPropertyEditor.cs`: `[PropertyEditor(typeof(string), StringLookup.Single, false)]`, `BlazorPropertyEditorBase`, `CreateComponentModel` → `DxComboBoxModel<string,string>` with `AllowUserInput = false`, `FilteringMode = Contains`, and `Data` = `(CurrentObject as IStringLookupSource)?.LookupValues(PropertyName, roleNames) ?? []`. `Data` is reloaded in the **`ReadValueCore()` override**, which re-runs whenever the editor re-reads the object, including after an `ImmediatePostData` sibling changes.
   - Blazor, `Editors/StringMultiLookupPropertyEditor.cs` (`StringLookup.Multi`), plus `StringMultiLookupEdit.razor` and `StringMultiLookupEditModel.cs`:
-    - **Pattern (settled 2026-09-25):** WLNCentral's `WLNCentral.Blazor.Server/Editors/TagBox/`, proven in production.
+    - **Pattern (settled 2026-09-25):** an existing production TagBox string-lookup editor in a sibling XAF project.
       - `TagBoxStringPropertyEditor : BlazorPropertyEditorBase, IComplexViewItem`.
       - A custom `ComponentModelBase` model whose property names match the razor `[Parameter]`s.
       - A razor component wrapping `DxTagBox` with `AllowCustomTags="false"`.
       - `ReadValueCore` sets `Value` + `LookupItems`, `GetControlValueCore` returns `Value`, `ApplyReadOnly` sets `ReadOnly`, and `CreateViewComponentCore` renders plain read-only text in list cells (the docs 402189 `InputTextModel`).
-    - **Reimplement it; do not copy.** Read the files with `cat` from `C:\Projects\WLNCentral\WLNCentral.Blazor.Server\Editors\TagBox\`. Adapt:
+    - **Reimplement it; do not copy.** Adapt:
       - the lookup comes from `IStringLookupSource.LookupValues(PropertyName, roleNames)` instead of `[TagBoxLookup]` + a DB query;
       - the separator is `;`, not `,`;
       - drop the customer-scope filter and the Dutch strings;
@@ -981,10 +975,10 @@ Invoke `xaf-viewcontroller-patterns`, `xaf-tools:xaf-conditional-appearance` and
     - **read-only** on `WorkflowInstance`, `WorkflowTask` and `WorkflowNotification`;
     - read on the definition types;
     - navigation to Tasks and to each subject's navigation item.
-  - Verify the member-permission and navigation-permission APIs with dxdocs before writing them (`xaf-tools:xaf-security`).
+  - Verify the member-permission and navigation-permission APIs with the DevExpress docs before writing them.
 - Navigation: a "Workflow" group with Definitions, Tasks (a default list view filtered to Open tasks of the user's roles via `CriteriaOperator` and `CurrentUserId`) and Notifications.
 
-- [ ] **Step 1:** Create `XafStateless.Blazor` (Razor class library; DevExpress `DevExpress.ExpressApp.Blazor` 26.1.4) with `XafStatelessBlazorModule`. Reference it from the demo Blazor server and register the module. Read the WLNCentral TagBox editor (see above) before writing the editors.
+- [ ] **Step 1:** Create `XafStateless.Blazor` (Razor class library; DevExpress `DevExpress.ExpressApp.Blazor` 26.1.4) with `XafStatelessBlazorModule`. Reference it from the demo Blazor server and register the module.
 - [ ] **Step 2:** Write `StringLookup`, the two editors, `IStringLookupSource` on the entities, the controllers and the appearance rules.
 - [ ] **Step 3:** Seed the demo `Updater.cs`:
   - the roles `Approvers` (`GrantParticipant(r, (typeof(PurchaseRequest), "PurchaseRequest_ListView"))`; confirm the generated navigation item id) and `WorkflowDesigners` (`GrantDesigner(r)`);
@@ -1046,7 +1040,7 @@ Settled with the user on 2026-09-25: yes.
     - `Clearing_workflow_link_does_not_dodge_lock`: in approval (Amount locked), set `Workflow = null` **and** change Amount in one save. It is refused, and the refusal names the workflow link.
     - `Subject_save_and_transition_race_one_loses`: OS-A loads the subject in the unlocked `draft` and edits Amount. The runtime fires Submit into approval (Amount locked) and commits. Then OS-A commits. **Expected:** OS-A's first save is refused, with **either** `'Amount' is locked` (the guard queried the now-persisted `approval` state) **or** the lost-race shape pinned by Task 4b (it lost on the subject's lock version). Either is correct; the assertion is that Amount is unchanged in the database. Two separate assertions cover the pieces, and both follow the behaviour **pinned in Task 4b**: (a) with no lock configured, the same interleaving either fails with the lost-race shape (4b case i), or merges with an extra `SavingChanges` pass that the guard sees (4b case ii; assert the pass count ≥ 2); (b) after OS-A reloads and re-applies the edit, the save is refused with `'Amount' is locked`. The mirror case: OS-A commits first, then the command's commit loses, retries, and succeeds with the edited Amount (a legitimate pre-lock edit).
 - [ ] **Step 2: Run them and confirm they fail.**
-- [ ] **Step 3: Implement it.** Before writing it, check the concrete `IAppearanceRuleProperties` implementation to use: search DevExpress sources for a public class implementing it (`C:\Program Files\DevExpress 26.1\Components\Sources\DevExpress.ExpressApp\DevExpress.ExpressApp.ConditionalAppearance`), and fall back to a small private implementation only when none is public.
+- [ ] **Step 3: Implement it.** Before writing it, check the concrete `IAppearanceRuleProperties` implementation to use: search DevExpress sources for a public class implementing it (the installed DevExpress sources, `DevExpress.ExpressApp.ConditionalAppearance`), and fall back to a small private implementation only when none is public.
 - [ ] **Step 4: Run them and confirm they pass. Then check the UI** with the exe: in Approval, the Amount editor is disabled; after Reject, it is editable. Take one screenshot each.
 - [ ] **Step 5: Commit** — `Module: per-state field locking — appearance + save guard (XSM-011)`.
 
@@ -1077,8 +1071,6 @@ Settled with the user on 2026-09-25: yes.
 - Create: `docs/integrating.md`
 - Modify: `README.md` (Status plus a short "How to run")
 
-Invoke `xaf-tools:xaf-playwright-testing` first.
-
 - [ ] **Step 1: Write the journey test** (NUnit `PageTest`, base URL from `appsettings.e2e.json`, not an environment variable). Each step takes a screenshot:
   1. The designer logs in and runs New version on purchase-request, which creates v2.
   2. The designer adds the state `finance` (Task, role Approvers) and re-routes `approval --Approve--> finance --Approve--> decide-amount`.
@@ -1099,12 +1091,12 @@ Settled with the user on 2026-09-25: "first a demo using this repo, then start t
 
 ### Task 10: Trial integration into the target host application (branch, not merged)
 
-**Files (in the target host repository, branch `trial/xafstateless`):**
+**Files (in the target host repository, on a trial branch):**
 - Modify: `the host module csproj`, `Module.cs`, `the host DbContext`, one subject class
 - Modify: `the host Blazor module`, `Startup.cs`, the host page (script tag)
 - Create: `a host job command for the workflow timers` and its handler, following the existing `IJobHandler<T>` pattern, plus a seeded `JobDefinition` with cron `* * * * *`
 
-- [ ] **Step 1:** Consume the module through a **ProjectReference to this repo** (`..\..\..\XafStateless\src\...`). Packaging to NuGet waits until the trial passes (`ponytail: ProjectReference for the trial; pack like XafLayoutBuilder once it is adopted`).
+- [ ] **Step 1:** Consume the module through a **ProjectReference to this repo** (`..\..\..\XafStateless\src\...`). Packaging to NuGet waits until the trial passes (`Kept simple: ProjectReference for the trial; pack like XafLayoutBuilder once it is adopted`).
 - [ ] **Step 2:** Follow `docs/integrating.md` **literally**. Every step that is missing or wrong in the doc is a doc bug: fix the doc in this repo and note it in the trial report.
 - [ ] **Step 3:** Pick one existing the target host application business class as the subject. If none fits, add a minimal `ChangeRequest` class in the trial branch only, then define a three-state flow in the UI.
 - [ ] **Step 4:** Build, run and walk the flow once. Confirm the Hangfire job fires a Wait. Screenshot it.
@@ -1118,7 +1110,7 @@ Settled with the user on 2026-09-25: "first a demo using this repo, then start t
 - Per-state appearance beyond locking (colors, hiding fields). Locking is covered by Task 7b; the rest can come later if someone asks.
 - A drag-and-drop diagram editor. It comes back only if forms prove too clumsy in the Task 9 journey.
 - Migrating running instances to a new version. They stay pinned, the same as the earlier proof of concept.
-- Multi-node timer or dispatcher safety. The target is a single instance, as the earlier proof of concept tested (`ponytail: add a lease column when a second node appears`).
+- Multi-node timer or dispatcher safety. The target is a single instance, as the earlier proof of concept tested (`Kept simple: add a lease column when a second node appears`).
 - Non-SQL-Server providers, and non-Guid subject keys (see Global Constraints).
 - NuGet packaging (after the Task 10 trial).
 
@@ -1150,5 +1142,5 @@ Settled with the user on 2026-09-25: "first a demo using this repo, then start t
    - Guards are wired before their tests run, and the timer end-to-end check moves to Task 7.
    - Timer retry rules are unified.
    - Mermaid comes from our own formatter, so a broken draft still draws.
-4. Lookups for states, roles and members: **custom Blazor string lookup editors** (option b; the model stays string-keyed), in `XafStateless.Blazor`, created in Task 7. The multi-select follows WLNCentral's `Editors/TagBox` (a custom razor `DxTagBox` + `ComponentModelBase`, refreshed in `ReadValueCore`).
+4. Lookups for states, roles and members: **custom Blazor string lookup editors** (option b; the model stays string-keyed), in `XafStateless.Blazor`, created in Task 7. The multi-select follows that project's `Editors/TagBox` (a custom razor `DxTagBox` + `ComponentModelBase`, refreshed in `ReadValueCore`).
 5. Order: **the demo in this repo first**, with a gate after Task 9, **then** the the target host application trial.

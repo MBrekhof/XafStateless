@@ -4,10 +4,10 @@ Card: XSM-030 (CARD-1921). Status: **design, not implementation**. The card's ob
 current state per instance, `WorkflowInstance.StateKey`, 34 uses across runtime, guards, tasks, timer, diagram); which
 way to relax it is a decision for Martin, with Codex's second opinion attached below.
 
-## What the BPG scenarios need (from the card)
+## What the target scenarios need (from the card)
 
-- Helpdesk (bpg WF-001): "waiting for parts" alongside the fix: two branches, each with its own waits and tasks.
-- Driving school (bpg WF-002): the document check alongside invoice → wait-for-payment: again branches with sub-flows.
+- Helpdesk: "waiting for parts" alongside the fix: two branches, each with its own waits and tasks.
+- Driving school: the document check alongside invoice → wait-for-payment: again branches with sub-flows.
 - Both continue when **both** branches are done (a join). Today both validate only serialised.
 
 ## Options
@@ -40,7 +40,7 @@ What changes where:
 - Tests: validator rules; runtime fork/join/cancel/timer-in-branch/lock-union; E2E: a two-branch version of
   purchase-request (finance check alongside a supplier confirmation task) walked end to end.
 
-Cost estimate: 4 to 5 days (engine 1, runtime and guards 2, designer and diagram 0.5, tests and E2E 1, BPG scenario
+Cost estimate: 4 to 5 days (engine 1, runtime and guards 2, designer and diagram 0.5, tests and E2E 1, scenario
 re-check 0.5). Everything that exists keeps its guarantees per instance; the invariant becomes "one current state per
 instance, and a fork's branches are instances".
 
@@ -55,16 +55,16 @@ raw. Not recommended: A gives the same behaviour by composition.
 ### C. Parallel tasks inside one state
 
 A Task state with several assignments (roles) that completes when all are decided. One to two days, but it covers "two
-approvals at once" only: the BPG branches have waits and decisions of their own (invoice → wait for payment), which this
+approvals at once" only: the scenario branches have waits and decisions of their own (invoice → wait for payment), which this
 cannot express. Could be a later addition on top of A for the simple case.
 
 ### D. Keep serialising (status quo)
 
-Documented workaround; the slower branch waits for the other. Zero cost; the BPG scenarios stay approximations.
+Documented workaround; the slower branch waits for the other. Zero cost; the scenarios stay approximations.
 
 ## Decisions for Martin
 
-1. Do A now, or leave XSM-030 open until BPG WF-008 needs it? (A is the largest card so far; it reshapes the instance
+1. Do A now, or leave XSM-030 open until a consumer needs it? (A is the largest card so far; it reshapes the instance
    view and the diagram.)
 2. If A: branches defined inside the same definition (the proposal: a "Branch of" lookup on states; one version, one
    diagram) or as separate definitions referenced by name (simpler runtime, but each branch is its own versioned
@@ -109,7 +109,7 @@ implementation-ready and understates the cost: "children run unchanged" is not t
 11. **Cost**: 7 to 10 developer days for the full feature, not 4 to 5. Smallest honest slice: one-level forks with
     explicit branches and entry states in the same definition; Task, Wait, Decision and Final inside branches; a
     transactional join and cancel; retained history; the persisted lock union; basic branch and task lists; fork re-entry
-    and unsupported shapes refused at publish; composite-diagram polish and branch manual actions deferred. Both BPG
+    and unsupported shapes refused at publish; composite-diagram polish and branch manual actions deferred. Both
     scenarios proven in both completion orders. Wait is elapsed time only: a real payment or parts arrival still needs an
     explicit task outcome.
 12. **B is shown unfavourably** (a fair B, typed execution-token rows, converges on A; the twofold cost gap is not

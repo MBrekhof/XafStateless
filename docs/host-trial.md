@@ -1,48 +1,49 @@
-# Host trial: XafStateless in the BPGDemo skeleton
+# Host trial: XafStateless in a second XAF host
 
-**Result: the module drops into BPGDemo by following `docs/integrating.md`, with four doc gaps (now fixed) and no module
-change.** The guards hold for UI and Web API writes alike. Timers and notifications run as Hangfire jobs through the
-skeleton's own job framework. Two findings matter for BPG before the module goes into generated apps for real: workflow
-writes bypass the skeleton's automation hooks, and adding a job to the skeleton takes two new files plus five plumbing
-edits across four existing ones.
+**Result: the module drops into an existing XAF Blazor host by following `docs/integrating.md`, with four doc gaps (now
+fixed) and no module change.** The host is a generated-app skeleton with its own command/handler job framework, Hangfire,
+a Web API and generated layouts. The guards hold for UI and Web API writes alike. Timers and notifications run as Hangfire
+jobs through the host's own job framework. Two findings matter for such a host before the module goes in for real:
+workflow writes bypass the host's automation hooks, and adding a job to the host's framework takes two new files plus five
+plumbing edits across four existing ones.
 
-Plan: `docs/superpowers/plans/2026-09-26-bpgdemo-trial.md`. Cards: XSM-015 (wiring), XSM-016 (subject, flow, API,
-hooks), XSM-017 (jobs), XSM-010 (this report). Carried out 2026-09-26.
+Cards: XSM-015 (wiring), XSM-016 (subject, flow, API, hooks), XSM-017 (jobs), XSM-010 (this report). Carried out
+2026-09-26.
 
 ## Setup
 
 | | |
 |---|---|
-| Revisions | BPGDemo `83f3a98` (master), XafStateless `da61a65`, BPG `1246a00` |
-| Trial branch | `trial/xafstateless` in worktree `C:\Projects\BPGDemo.trial`: `d5b1f93` (XSM-015), `e804d3c` (XSM-016), `b63164f` (XSM-017). Local, never pushed; the branch is kept, the worktree and database were removed after this report. |
-| Why a worktree | BPG copies `C:\Projects\BPGDemo` as its skeleton (`XAF:SkeletonProjectPath`). The main tree stayed on `master` throughout. |
-| Database | `(localdb)\mssqllocaldb`, catalog `bpgdemoTrial`, set in the trial's `appsettings.Development.json` |
-| Run | exe from `bpgdemo.Blazor.Server\bin\Debug\net10.0`, always `--environment Development` (the exe ignores launch profiles; without it the host updates the `bpgdemo` catalog). The `bpgdemo.mdf` timestamp stayed unchanged through every run. |
+| Revisions | XafStateless `da61a65`; the host at its then-current master |
+| Trial branch | A local branch of the host, three commits (XSM-015, XSM-016, XSM-017), never merged; the worktree and database were removed after this report. The host's main tree stayed on `master` throughout. |
+| Database | SQL Server LocalDB, a trial catalog set in the trial's `appsettings.Development.json` |
+| Run | the host exe, always `--environment Development` (the exe ignores launch profiles; without it the host updates its default catalog, whose timestamp stayed unchanged through every run) |
 | Packages | No downgrade or conflict warnings. Resolved: Microsoft.Data.SqlClient 6.1.2, EF Core + SqlServer 10.0.10, DevExpress.ExpressApp 26.1.4, Hangfire 1.8.25, MailKit 4.18.0, Stateless 5.20.1 |
-| Tests | bpgdemo.Jobs.Tests 47/47; XafStateless Engine 37, Module 95, the same as before the trial (the trial changed no module code) |
+| Tests | Host job tests 47/47; XafStateless Engine 37, Module 95, the same as before the trial (the trial changed no module code) |
 
 ## Touch points
 
-`git diff --stat master..trial/xafstateless`: 16 files, 178 lines added, none removed.
+The trial branch's diff against the host's master: 16 files, 178 lines added, none removed.
 
 **Module integration (XSM-015 + XSM-016), 10 files, 83 lines:**
 
 | File | Lines | What |
 |---|---|---|
-| `bpgdemo.Module/bpgdemo.Module.csproj` | 1 | ProjectReference to XafStateless.Module |
-| `bpgdemo.Module/Module.cs` | 1 | `RequiredModuleTypes.Add(XafStatelessModule)` |
-| `bpgdemo.Module/BusinessObjects/bpgdemoDbContext.cs` | 21 | usings, 7 DbSets + subject DbSet, `ConfigureXafStateless()`, `OnConfiguring` with both guards |
-| `bpgdemo.Blazor.Server/bpgdemo.Blazor.Server.csproj` | 1 | ProjectReference to XafStateless.Blazor |
-| `bpgdemo.Blazor.Server/BlazorModule.cs` | 1 | `RequiredModuleTypes.Add(XafStatelessBlazorModule)` |
-| `bpgdemo.Blazor.Server/Startup.cs` | 3 of 5 | `AddXafStateless()`, Web API `BusinessObject<ChangeRequest>()` |
-| `bpgdemo.Blazor.Server/Pages/_Host.cshtml` | 2 | Mermaid + diagram script tags |
-| `bpgdemo.Module/BusinessObjects/ChangeRequest.cs` | 16 | the trial's subject class (the skeleton has none of its own) |
-| `bpgdemo.Module/DatabaseUpdate/Updater.cs` | 34 of 43 | Approvers/WorkflowDesigners roles, `designer`/`approver` demo users |
-| `bpgdemo.Blazor.Server/appsettings.Development.json` | 3 of 6 | trial catalog (trial-only) |
+| `Host.Module/Host.Module.csproj` | 1 | ProjectReference to XafStateless.Module |
+| `Host.Module/Module.cs` | 1 | `RequiredModuleTypes.Add(XafStatelessModule)` |
+| `Host.Module/BusinessObjects/HostDbContext.cs` | 21 | usings, 7 DbSets + subject DbSet, `ConfigureXafStateless()`, `OnConfiguring` with both guards |
+| `Host.Blazor.Server/Host.Blazor.Server.csproj` | 1 | ProjectReference to XafStateless.Blazor |
+| `Host.Blazor.Server/BlazorModule.cs` | 1 | `RequiredModuleTypes.Add(XafStatelessBlazorModule)` |
+| `Host.Blazor.Server/Startup.cs` | 3 of 5 | `AddXafStateless()`, Web API `BusinessObject<ChangeRequest>()` |
+| `Host.Blazor.Server/Pages/_Host.cshtml` | 2 | Mermaid + diagram script tags |
+| `Host.Module/BusinessObjects/ChangeRequest.cs` | 16 | the trial's subject class (the host has none of its own) |
+| `Host.Module/DatabaseUpdate/Updater.cs` | 34 of 43 | Approvers/WorkflowDesigners roles, `designer`/`approver` demo users |
+| `Host.Blazor.Server/appsettings.Development.json` | 3 of 6 | trial catalog (trial-only) |
 
-**Skeleton job plumbing (XSM-017), 9 files, 95 lines** (three of them shared with the list above: `Startup.cs`, `Updater.cs`, `appsettings.Development.json`): two command records, two handlers,
-two `AddJobHandler` lines, four `case`s in `JobDispatchService` (two switches), two `CommandMetadataProvider` entries,
-two seeded `JobDefinition`s, `Jobs:UseHangfire = true` for the trial.
+**Host job plumbing (XSM-017), 9 files, 95 lines** (three of them shared with the list above: `Startup.cs`,
+`Updater.cs`, `appsettings.Development.json`): two command records, two handlers, two `AddJobHandler` lines, four `case`s
+in the host's job dispatcher (two switches), two command-metadata entries, two seeded `JobDefinition`s,
+`Jobs:UseHangfire = true` for the trial.
 
 ## Doc bugs fixed in `docs/integrating.md`
 
@@ -55,8 +56,8 @@ two seeded `JobDefinition`s, `Jobs:UseHangfire = true` for the trial.
    `DemoDbContext` now carries the same pragma.
 3. §7 did not say where `IWorkflowSubject` and `WorkflowInstance` live (`XafStateless.Module.BusinessObjects`).
 4. §7: `WorkflowInstance?` raises CS8632 in a project without nullable enabled, which is the XAF template default and
-   the skeleton's setting. §7 now says to add `#nullable enable` or drop the `?`.
-5. §7 had no Web API step. The skeleton's Web API exposes only registered types, so `options.BusinessObject<ChangeRequest>()`
+   the host's setting. §7 now says to add `#nullable enable` or drop the `?`.
+5. §7 had no Web API step. The host's Web API exposes only registered types, so `options.BusinessObject<ChangeRequest>()`
    was needed; §7 now has it as an optional step, with what the guards return.
 
 Plus a pointer from §8 to this report for a host with a command/handler job framework. §1, §2, §5, §8 and §9 worked as
@@ -72,7 +73,7 @@ Found by the Codex review of this report, read in code, not tried on a host (bot
 
 ## What was verified
 
-**Schema on an existing database (XSM-015).** The untouched skeleton was seeded first (3 users, 3 roles, a marker
+**Schema on an existing database (XSM-015).** The untouched host was seeded first (3 users, 3 roles, a marker
 `JobDefinition`). Adding the module and updating created the 7 workflow tables and the 4 filtered unique indexes from
 `ModelBuilderExtensions` (each filtered on `[GCRecord]=(0)`); users and the marker row survived. A dropped and rebuilt
 catalog gives the same tables and indexes; a second update on a populated catalog exits 0.
@@ -81,16 +82,14 @@ catalog gives the same tables and indexes; a second update on a populated catalo
 → Done [Set field Implemented = true] / Rejected). `approver` started a request, submitted it, found Description read-only
 in Review, approved it: Done, Implemented = 1.
 
-![Review: Description is locked](images/host-trial/t2-b1-locked-description.png)
-
 **Web API (XSM-016).** With an `approver` token: GET 200 and a PATCH on a request not started 204 (the positive
 controls). On a request in Review: PATCH Description → 400 `'Description' is locked in state 'Review'`; DELETE → 400
 `'Request B' cannot be deleted while its workflow is in 'Review'`. The row was unchanged in the database.
 
 **Timer and notification on Hangfire (XSM-017).** ChangeFlow v1 adds a one-minute Wait ("Cooling") after approve and a
-Notify to Approvers on Done. JobSyncService registered both recurring jobs with no "unknown job type" warning. Request D
-(instance `3D055CE0-6CA7-4D22-5741-08DF1BCF82C0`) entered Cooling at 13:10:22Z, due 13:11:22Z, and reached Done at
-13:12:13Z. The timer handler logged `running as HangfireJob` then `1 fired` (Hangfire job 10). Notification
+Notify to Approvers on Done. The host's job sync registered both recurring jobs with no "unknown job type" warning.
+Request D (instance `3D055CE0-6CA7-4D22-5741-08DF1BCF82C0`) entered Cooling at 13:10:22Z, due 13:11:22Z, and reached
+Done at 13:12:13Z. The timer handler logged `running as HangfireJob` then `1 fired` (Hangfire job 10). Notification
 `1C5670B1-28C9-4979-D447-08DF1BCFC7DA`: Sent, Attempts 1, one log line (job 11), none on the next run. Both
 JobDefinitions: LastRunStatus Success, 6/6 linked runs successful.
 
@@ -102,7 +101,7 @@ grants): the timer needs no workflow permissions because it runs as the system o
 
 ![Diagram of ChangeFlow v1](images/host-trial/t3-g4-diagram-v2.png)
 
-More screenshots: `images/host-trial/` (definition list, v0 diagram, request Done, Hangfire recurring jobs, request D Done).
+The v0 diagram is in `images/host-trial/t2-a3-diagram.png`; the trial's other screenshots showed the host's name and were not kept.
 
 ## Friction
 
@@ -110,35 +109,32 @@ More screenshots: `images/host-trial/` (definition list, v0 diagram, request Don
 |---|---|---|
 | Four doc gaps (above) | Fixed in `integrating.md` | No |
 | XAF0031 on the override | Pragma + explanation in §3 | No |
-| No NuGet package: the host references this repo by relative path | Pack like XafLayoutBuilder once adopted | Packaging only |
-| Adding a job to the skeleton: command, handler, `AddJobHandler`, two dispatch switches, metadata, and a seed whose Name must equal the command type name | bpg JOBS-001 | No (skeleton) |
-| The subject needs `IWorkflowSubject` + a `Workflow` property in its source | For generated apps BPG would emit both | No |
-| Tabs persist per user across logons, which made scripted re-runs flaky | bpg CARD-1825 (second sighting added) | No (skeleton) |
+| No NuGet package: the host referenced this repo by relative path | Packed since 0.1.0 (`docs/plans/2026-09-29-nuget-packages.md`) | Packaging only |
+| Adding a job to the host: command, handler, `AddJobHandler`, two dispatch switches, metadata, and a seed whose Name must equal the command type name | Host-side | No (host) |
+| The subject needs `IWorkflowSubject` + a `Workflow` property in its source | A code generator would emit both | No |
+| XAF Blazor restores a user's open tabs at the next login (the demo enables this in its model), which made scripted re-runs flaky | The demo raises the tab cap (`Program.cs`); the entry-screen E2E test closes restored tabs first | No (XAF) |
 
 ## Findings, each on a card
 
 | Finding | Status | Card |
 |---|---|---|
-| Workflow Set-field writes bypass the skeleton's automation hooks. A scratch probe on both hook paths saw a UI edit (positive control) and the API PATCHes, but not the runtime's commit that set `Implemented`, although the database had it. The runtime uses `INonSecuredObjectSpaceFactory`; the skeleton announces only `IObjectSpaceFactory` spaces. | Bypass observed; effect on a real generated rule or webhook **unverified** | bpg WF-007 |
-| The generated "Webhook outbox" JobDefinition's Name differs from its command name, so by the recorder's Name lookup its LastRunStatus would never update. The trial showed the mechanism the other way round (Name = command name links). | **Unverified**, read in code only | bpg AUTO-003 |
-| Skeleton users have no e-mail address, so the dispatcher can only log. A real dispatcher needs a user→address source. | Observed | XSM-014 (`fd4a44d`): Notify can address the requester by user id; resolving a user to an address stays the host's job |
+| Workflow Set-field writes bypass the host's automation hooks. A scratch probe on both hook paths saw a UI edit (positive control) and the API PATCHes, but not the runtime's commit that set `Implemented`, although the database had it. The runtime uses `INonSecuredObjectSpaceFactory`; the host announces only `IObjectSpaceFactory` spaces. | Bypass observed; effect on a real host automation rule or webhook **unverified** | Host-side, open |
+| The host's generated "Webhook outbox" JobDefinition's Name differs from its command name, so by the recorder's Name lookup its LastRunStatus would never update. The trial showed the mechanism the other way round (Name = command name links). | **Unverified**, read in code only | Host-side, open |
+| Host users have no e-mail address, so the dispatcher can only log. A real dispatcher needs a user→address source. | Observed | XSM-014 (`fd4a44d`): Notify can address the requester by user id; resolving a user to an address stays the host's job |
 | A brand-new definition publishes as Version 0; New version makes 1 | Reproduced by a test, fixed | XSM-018 (`b24ad47`) |
-| The effect detail view's Kind/Target combos and Order spin have no accessible names (the state view's do) | Not reproduced in the demo; the E2E journey now checks them by role and name. Likely the BPGDemo layout (XafLayoutBuilder) | XSM-019 (`a26833a`) |
+| The effect detail view's Kind/Target combos and Order spin have no accessible names (the state view's do) | Not reproduced in the demo; the E2E journey now checks them by role and name. Likely the host's generated layouts | XSM-019 (`a26833a`) |
 | The module's navigation items show XAF's "?" placeholder icon; the effect-kind caption reads "Set field" | Images fixed; "Set field" is XAF's standard sentence case for enum values, kept | XSM-020 (`a26833a`) |
 
-## Putting it in the skeleton for real
+## Adopting it in such a host for real
 
-The trial branch is a proof, not a merge candidate. Adoption would need:
+The trial branch is a proof, not a merge candidate. Adoption needs:
 
-1. **A NuGet package** for XafStateless.Module and .Blazor, published to the local feed like XafLayoutBuilder, instead
-   of the relative ProjectReference.
-2. **A decision on WF-007**: announce the runtime's object spaces to the automation hooks, or document that workflow
-   effects never trigger automation rules and webhooks.
-3. **The BPG side**: BPG regenerates the DbContext's DbSets and the updater for each app, so the generator has to emit
-   the workflow DbSets, `ConfigureXafStateless()`, the guard override and the role seeding, plus `IWorkflowSubject` on
-   the classes the spec marks as workflow subjects. The two jobs belong in the skeleton itself (ideally after JOBS-001).
-4. **The BPG gates**: any skeleton change runs `GenerationPipelineTests` (BPG's E2E gate), and skeleton-only work gets a
-   bpg card closed against the BPGDemo SHAs.
-5. **Overlap with bpg WF-004/005/006** (Stateless-based skeleton workflow pieces generated from the spec): decide whether
-   XafStateless replaces that approach or sits next to it. That is the "BPG generates workflows" question, deliberately
-   left out of this trial.
+1. **The NuGet packages** (XafStateless.Engine, .Module and .Blazor, available since 0.1.0) instead of a relative
+   ProjectReference.
+2. **A decision on the automation bypass**: announce the runtime's object spaces to the host's automation hooks, or
+   document that workflow effects never trigger the host's automation rules and webhooks.
+3. **A host that generates its DbContext and updater** has to emit the workflow DbSets, `ConfigureXafStateless()`, the
+   guard override and the role seeding, plus `IWorkflowSubject` on the classes it marks as workflow subjects. The two jobs
+   belong in the host itself.
+4. **Overlap with the host's own generated workflow pieces**: decide whether XafStateless replaces that approach or sits
+   next to it. That question was deliberately left out of this trial.

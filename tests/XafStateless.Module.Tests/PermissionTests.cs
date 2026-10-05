@@ -280,7 +280,7 @@ public class PermissionTests : IClassFixture<TestDb>
         Assert.Equal(DefinitionState.Draft, check.FirstOrDefault<WorkflowDefinition>(x => x.Name == name)!.State);
     }
 
-    [Fact] public void New_definition_numbers_past_versions_the_caller_cannot_read()   // XSM-018 (Codex)
+    [Fact] public void New_definition_numbers_past_versions_the_caller_cannot_read()   // XSM-018
     {
         var name = PublishPurchaseRequest();   // published v1
         var user = $"drafts-{Guid.NewGuid():N}";

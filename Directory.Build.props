@@ -6,7 +6,7 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
   <PropertyGroup>
-    <!-- The packages accept DevExpress 26.1.4 (what BPGDemo and this repo's demo pin) and any later 26.1 patch, and refuse
+    <!-- The packages accept DevExpress 26.1.4 (what the demo and the first host pin) and any later 26.1 patch, and refuse
          26.2, whose assemblies must never be mixed with 26.1. Move it together with the demo's pinned version. -->
     <DevExpressPackageRange>[26.1.4,26.2)</DevExpressPackageRange>
   </PropertyGroup>
