@@ -5,7 +5,8 @@
 Added a `Show details` / `Hide details` toggle button to the Mermaid workflow diagram (`Diagram.razor`, `DiagramModel`,
 `DiagramViewItem`, `WorkflowMermaid` with `DiagramStyle(Details: true)`). When enabled, state boxes include task roles,
 wait durations (`min`), and locked fields (`locks ...`), and transition labels include required roles (`(...)`) and
-criteria (`[...]`). Tests: `dotnet test XafStateless.slnx` → Engine 53, Module 141, all green.
+criteria (`[...]`). Bumped `PackageVersion` to `0.2.0` and published `XafStateless.Engine`, `XafStateless.Module`, and
+`XafStateless.Blazor` `0.2.0` to the package feed. Tests: `dotnet test XafStateless.slnx` → Engine 53, Module 141, all green.
 
 # Previous session — 2026-10-05
 
