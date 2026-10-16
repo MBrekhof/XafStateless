@@ -1,4 +1,13 @@
-# Session handoff — 2026-10-05
+# Session handoff — 2026-10-16
+
+## This session (2026-10-16): Diagram "Show details" toggle
+
+Added a `Show details` / `Hide details` toggle button to the Mermaid workflow diagram (`Diagram.razor`, `DiagramModel`,
+`DiagramViewItem`, `WorkflowMermaid` with `DiagramStyle(Details: true)`). When enabled, state boxes include task roles,
+wait durations (`min`), and locked fields (`locks ...`), and transition labels include required roles (`(...)`) and
+criteria (`[...]`). Tests: `dotnet test XafStateless.slnx` → Engine 53, Module 141, all green.
+
+# Previous session — 2026-10-05
 
 ## This session (2026-10-05): XSM-034, the public-readiness pass (`a4c1c03`, Review)
 

@@ -30,7 +30,7 @@ XAF's built-in StateMachine module was checked against the DevExpress documentat
 | Safe editing | Edits apply live to running objects | Draft → Published → Retired; running work stays pinned to its version |
 | Validation | None | While editing and again at publish: reachability, a way out, no stuck wait, no automatic loop, and criteria, role and field checks; a problem with a state is marked on that state, the rest are listed as messages |
 | Lock fields per state | Yes: `StateAppearance`, UI only | Yes: locked in the UI and refused at save |
-| Diagram | None | Mermaid, generated from the definition that runs: colored by step type, problems in red, a request's current state highlighted |
+| Diagram | None | Mermaid, generated from the definition that runs: colored by step type, problems in red, a request's current state highlighted, optional details (roles, wait durations, locked fields, criteria) |
 
 ## Architecture
 
@@ -76,7 +76,8 @@ Proof of concept, feature-complete for the demo:
 - entry screens: a page opened from the navigation (lookup, checkboxes, a list of subjects) whose Start action starts the
   workflow on each selected subject, through the user's secured object space;
 - the designer: Target Type picked from the workflow subject classes, validation while editing (problem states in red in
-  the list and the diagram, Publish and Dry run gated), the diagram with zoom, portrait/landscape and colors by step type.
+  the list and the diagram, Publish and Dry run gated), the diagram with zoom, portrait/landscape, details toggle (roles,
+  wait durations, locked fields, criteria) and colors by step type.
 
 Coverage:
 - Engine and module: unit and LocalDB tests (`dotnet test XafStateless.slnx`).

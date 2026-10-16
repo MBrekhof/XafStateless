@@ -6,6 +6,7 @@ namespace XafStateless.Blazor;
 public class DiagramModel : ComponentModelBase
 {
     public string MermaidText { get => GetPropertyValue<string>(); set => SetPropertyValue(value); }
+    public string DetailedMermaidText { get => GetPropertyValue<string>(); set => SetPropertyValue(value); }
     public IReadOnlyList<string> Messages { get => GetPropertyValue<IReadOnlyList<string>>(); set => SetPropertyValue(value); }
     public override Type ComponentType => typeof(Diagram);
 }

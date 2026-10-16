@@ -134,4 +134,43 @@ public class WorkflowMachineTests
         Assert.Equal(1, mermaid.Split('\n').Count(l => l.StartsWith("    state \"")));
         Assert.DoesNotContain("[*] -->", mermaid);
     }
+
+    [Fact] public void Mermaid_details_includes_roles_wait_locks_and_criteria()
+    {
+        var def = new WorkflowDef("t", 1, "draft",
+            [
+                new("draft", "Draft", StateKind.Manual),
+                new("approval", "Approval", StateKind.Task, TaskRole: "Approvers", Locked: ["Amount", "Title"]),
+                new("decide", "Amount check", StateKind.Decision),
+                new("wait", "Cooling-off", StateKind.Wait, WaitMinutes: 15),
+                new("ordered", "Ordered", StateKind.Final),
+            ],
+            [
+                new("draft", "Submit", "approval", RequiredRole: "Requesters"),
+                new("approval", "Approve", "decide"),
+                new("decide", "Large", "wait", Criteria: "Amount > 1000; Status = 'New'"),
+                new("decide", "Small", "ordered"),
+                new("wait", "Cooled", "ordered"),
+            ]);
+
+        var detailed = WorkflowMermaid.Format(def, new DiagramStyle(Details: true));
+
+        Assert.Equal(
+            "stateDiagram-v2\n" +
+            "    state \"Draft\" as s0\n" +
+            "    state \"Approval<br/>Approvers<br/>locks Amount, Title\" as s1\n" +
+            "    state \"Amount check\" as s2\n" +
+            "    state \"Cooling-off<br/>15 min\" as s3\n" +
+            "    state \"Ordered\" as s4\n" +
+            "    [*] --> s0\n" +
+            "    s0 --> s1 : Submit (Requesters)\n" +
+            "    s1 --> s2 : Approve\n" +
+            "    s2 --> s3 : Large [Amount > 1000  Status = 'New']\n" +
+            "    s2 --> s4 : Small\n" +
+            "    s3 --> s4 : Cooled\n" +
+            "    s4 --> [*]\n",
+            detailed);
+        Assert.DoesNotContain("<br/>", WorkflowMermaid.Format(def, new DiagramStyle(Details: false)));
+    }
 }
+

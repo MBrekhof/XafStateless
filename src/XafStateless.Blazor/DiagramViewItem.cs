@@ -66,18 +66,24 @@ public sealed class DiagramViewItem(IModelViewItem model, Type objectType) :
         {
             case WorkflowDefinition d:
                 var problems = validation?.Findings?.Where(f => f.State != null).Select(f => f.State!).ToHashSet();
-                ComponentModel.MermaidText = WorkflowMermaid.Format(DefinitionMapper.ToDef(d, objectSpace), new DiagramStyle(ByKind: true, Problems: problems));
-                ComponentModel.Messages = validation?.Messages ?? [];
+                SetDiagram(DefinitionMapper.ToDef(d, objectSpace), new DiagramStyle(ByKind: true, Problems: problems), validation?.Messages ?? []);
                 break;
             case WorkflowInstance { Definition: { } pinned } i:
-                ComponentModel.MermaidText = WorkflowMermaid.Format(DefinitionMapper.ToDef(pinned), new DiagramStyle(ByKind: true, Current: i.StateKey));
-                ComponentModel.Messages = [];
+                SetDiagram(DefinitionMapper.ToDef(pinned), new DiagramStyle(ByKind: true, Current: i.StateKey), []);
                 break;
             default:
                 ComponentModel.MermaidText = "";
+                ComponentModel.DetailedMermaidText = "";
                 ComponentModel.Messages = [];
                 break;
         }
+    }
+
+    void SetDiagram(WorkflowDef def, DiagramStyle style, IReadOnlyList<string> messages)
+    {
+        ComponentModel.MermaidText = WorkflowMermaid.Format(def, style);
+        ComponentModel.DetailedMermaidText = WorkflowMermaid.Format(def, style with { Details = true });
+        ComponentModel.Messages = messages;
     }
 
     protected override void Dispose(bool disposing)

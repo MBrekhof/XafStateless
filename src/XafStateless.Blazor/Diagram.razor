@@ -14,6 +14,9 @@
         <DxButton Text="@(landscape ? "Portrait" : "Landscape")" SizeMode="SizeMode.Small" RenderStyle="ButtonRenderStyle.Secondary"
                   RenderStyleMode="ButtonRenderStyleMode.Outline"
                   Attributes="@Labelled(landscape ? "Show top to bottom" : "Show left to right")" Click="@ToggleOrientation" />
+        <DxButton Text="@(details ? "Hide details" : "Show details")" SizeMode="SizeMode.Small" RenderStyle="ButtonRenderStyle.Secondary"
+                  RenderStyleMode="ButtonRenderStyleMode.Outline"
+                  Attributes="@Labelled(details ? "Hide details" : "Show details")" Click="@ToggleDetails" />
     </div>
     <div class="xafstateless-diagram" @ref="container" style="overflow:auto;"></div>
     @if (!string.IsNullOrEmpty(MermaidText))
@@ -49,6 +52,7 @@
 
 @code {
     [Parameter] public string MermaidText { get; set; } = "";
+    [Parameter] public string DetailedMermaidText { get; set; } = "";
     [Parameter] public IReadOnlyList<string> Messages { get; set; } = [];
     [Inject] IJSRuntime JS { get; set; } = default!;
 
@@ -56,9 +60,11 @@
     string rendered = "";
     string renderedDirection = "";
     bool landscape;
+    bool details;
     bool scriptsMissing;
 
     string Direction => landscape ? "LR" : "TB";
+    string ActiveText => details && !string.IsNullOrEmpty(DetailedMermaidText) ? DetailedMermaidText : MermaidText;
 
     static Dictionary<string, string> Css(string style) =>
         style.Split(',').Select(p => p.Split(':')).ToDictionary(p => p[0], p => p[1]);
@@ -69,12 +75,14 @@
     // value, but most re-renders of the surrounding page change neither).
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (MermaidText == rendered && Direction == renderedDirection) return;
-        (rendered, renderedDirection) = (MermaidText, Direction);
-        await Call("diagram.render", container, MermaidText, Direction);
+        if (ActiveText == rendered && Direction == renderedDirection) return;
+        (rendered, renderedDirection) = (ActiveText, Direction);
+        await Call("diagram.render", container, ActiveText, Direction);
     }
 
     void ToggleOrientation() => landscape = !landscape;   // the next OnAfterRenderAsync redraws
+
+    void ToggleDetails() => details = !details;
 
     Task Zoom(double factor) => Call("diagram.zoom", container, factor);
 
