@@ -1,4 +1,16 @@
-# Session handoff — 2026-10-16
+# Session handoff — 2026-10-18
+
+## This session (2026-10-18): Diagram renderer switched to beautiful-mermaid 1.1.3
+
+Replaced the bundled Mermaid 11.17.2 (3.5 MB, Dagre) in `src/XafStateless.Blazor/wwwroot/mermaid.min.js` with a minified
+browser build of [`beautiful-mermaid`](https://github.com/lukilabs/beautiful-mermaid) 1.1.3 (1.5 MB, ELK orthogonal
+layout, synchronous `renderMermaidSVG`). Updated `src/XafStateless.Blazor/wwwroot/diagram.js` to bridge `classDef`/`class`
+statements onto `<g class="node" data-id="...">` in declaration order (`kind*` → `problem` → `current`), strip the Google
+Fonts `@import` for offline rendering, and switch light/dark themes in place via `--bg`/`--fg` CSS variables. Refreshed
+`docs/screenshots/diagram-v2-landscape.png` and `docs/integrating.md` §5. Tests: `dotnet test XafStateless.slnx` → Engine
+53, Module 141; `dotnet test tests\XafStateless.E2E` → 3/3, all green.
+
+# Previous session — 2026-10-16
 
 ## This session (2026-10-16): Diagram "Show details" toggle
 

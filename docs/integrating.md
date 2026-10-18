@@ -154,8 +154,9 @@ dispatcher are **not** registered here; the host owns them (steps 8 and 9).
 
 ## 5. Host page: Mermaid
 
-The diagram is drawn in the browser by the bundled Mermaid (no CDN). Add both script tags to the host page **before**
-`blazor.server.js` (demo: `XafStateless.Demo.Blazor.Server/Pages/_Host.cshtml`):
+The diagram is drawn in the browser by the bundled [`beautiful-mermaid`](https://github.com/lukilabs/beautiful-mermaid)
+renderer (`mermaid.min.js`, no CDN). Add both script tags to the host page **before** `blazor.server.js` (demo:
+`XafStateless.Demo.Blazor.Server/Pages/_Host.cshtml`):
 
 ```html
 <script src="_content/XafStateless.Blazor/mermaid.min.js"></script>
