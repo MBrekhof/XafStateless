@@ -2,13 +2,16 @@
 
   <PropertyGroup>
     <IsPackable>true</IsPackable>
-    <Description>XafStateless workflow engine: definitions, validation, dry run and Mermaid, over Stateless. No DevExpress dependency.</Description>
+    <Description>XafStateless workflow engine: definitions, validation, dry run, Mermaid and RulesEngine, over Stateless. No DevExpress dependency.</Description>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="FastExpressionCompiler" Version="5.0.2" />
+    <PackageReference Include="FluentValidation" Version="11.11.0" />
     <PackageReference Include="Stateless" Version="5.20.1" />
+    <PackageReference Include="System.Linq.Dynamic.Core" Version="1.6.2" />
   </ItemGroup>
 
 </Project>
