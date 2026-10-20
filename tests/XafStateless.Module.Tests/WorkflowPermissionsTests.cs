@@ -129,4 +129,17 @@ public class WorkflowPermissionsTests(TestDb db) : IClassFixture<TestDb>
         Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Subject(typeof(PurchaseRequest))));
         Assert.Equal(afterFirst, Rows(id));
     }
+
+    [Fact] public void Designer_and_participant_roles_cover_rule_set_entities()
+    {
+        var designerId = Role($"des-{Guid.NewGuid():N}", WorkflowPermissions.GrantDesigner);
+        var designerRows = Rows(designerId);
+        foreach (var t in new[] { nameof(WorkflowRuleSet), nameof(WorkflowRuleParam), nameof(WorkflowRule) })
+            Assert.Contains($"T {t} rAllow wAllow cAllow dAllow n", designerRows);
+
+        var partId = Role($"part-{Guid.NewGuid():N}", r => WorkflowPermissions.GrantParticipant(r, Subject(typeof(PurchaseRequest))));
+        var partRows = Rows(partId);
+        foreach (var t in new[] { nameof(WorkflowRuleSet), nameof(WorkflowRuleParam), nameof(WorkflowRule) })
+            Assert.Contains($"T {t} rAllow w c d n", partRows);
+    }
 }

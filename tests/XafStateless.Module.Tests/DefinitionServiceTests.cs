@@ -1,4 +1,4 @@
-﻿using DevExpress.EntityFrameworkCore.Security;
+using DevExpress.EntityFrameworkCore.Security;
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.DC;
 using DevExpress.ExpressApp.EFCore.DataLocking;
@@ -915,7 +915,134 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
             a!.Name == b!.Name && a.Version == b.Version && a.InitialState == b.InitialState
             && a.States.OrderBy(s => s.Key).Select(s => (s.Key, s.Caption, s.Kind, s.TaskRole, s.WaitMinutes, string.Join("|", s.Effects), string.Join("|", s.LockedMembers)))
                .SequenceEqual(b.States.OrderBy(s => s.Key).Select(s => (s.Key, s.Caption, s.Kind, s.TaskRole, s.WaitMinutes, string.Join("|", s.Effects), string.Join("|", s.LockedMembers))))
-            && a.Transitions.OrderBy(t => t.Trigger).SequenceEqual(b.Transitions.OrderBy(t => t.Trigger));
+            && a.Transitions.OrderBy(t => t.Trigger).SequenceEqual(b.Transitions.OrderBy(t => t.Trigger))
+            && a.RuleSetList.OrderBy(r => r.Key).Select(r => (r.Key, string.Join("|", r.Params), string.Join("|", r.Rules)))
+               .SequenceEqual(b.RuleSetList.OrderBy(r => r.Key).Select(r => (r.Key, string.Join("|", r.Params), string.Join("|", r.Rules))));
         public int GetHashCode(WorkflowDef d) => d.Name.GetHashCode();
+    }
+
+    // ---- XSM-035: WorkflowRuleSet, WorkflowRuleParam, WorkflowRule ----
+
+    static WorkflowRuleSet RS(IObjectSpace os, WorkflowDefinition d, string key)
+    {
+        var rs = os.CreateObject<WorkflowRuleSet>();
+        rs.Key = key;
+        d.RuleSets.Add(rs);
+        return rs;
+    }
+
+    static WorkflowRuleParam RP(IObjectSpace os, WorkflowRuleSet rs, string name, string expr, int? order = null)
+    {
+        var p = os.CreateObject<WorkflowRuleParam>();
+        (p.Name, p.Expression, p.Order) = (name, expr, order ?? rs.Params.Count);
+        rs.Params.Add(p);
+        return p;
+    }
+
+    static WorkflowRule RR(IObjectSpace os, WorkflowRuleSet rs, string name, string expr, string targetMember, string outputExpr, int? order = null)
+    {
+        var r = os.CreateObject<WorkflowRule>();
+        (r.Name, r.Expression, r.TargetMember, r.OutputExpression, r.Order) = (name, expr, targetMember, outputExpr, order ?? rs.Rules.Count);
+        rs.Rules.Add(r);
+        return r;
+    }
+
+    [Fact] public void RuleSet_validation_checks_expressions_and_target_members()
+    {
+        using var os = db.NewObjectSpace();
+        var d = Draft(os, Unique());
+        var rs = RS(os, d, "pricing");
+        RP(os, rs, "disc", "subject.UnknownProp * 2");
+        RR(os, rs, "r1", "subject.Amount > 100", "Amount", "subject.Amount - 10");
+        var r1 = svc.Validate(os, d, Roles());
+        Assert.False(r1.Ok);
+        Assert.Contains(r1.Messages, m => m.Contains("rule set 'pricing' parameter 'disc':"));
+
+        rs.Params[0].Expression = "subject.Amount * 0.1m";
+        rs.Rules[0].TargetMember = "ID";
+        var r2 = svc.Validate(os, d, Roles());
+        Assert.False(r2.Ok);
+        Assert.Contains(r2.Messages, m => m.Contains("'ID' cannot be set by a workflow"));
+
+        rs.Rules[0].TargetMember = "Amount";
+        rs.Rules[0].Expression = "subject.Amount + 10m";   // not boolean
+        var r3 = svc.Validate(os, d, Roles());
+        Assert.False(r3.Ok);
+        Assert.Contains(r3.Messages, m => m.Contains("rule set 'pricing' rule 'r1' condition:"));
+
+        rs.Rules[0].Expression = "subject.Amount > 100m";
+        rs.Rules[0].OutputExpression = "\"not-a-decimal\"";
+        var r4 = svc.Validate(os, d, Roles());
+        Assert.False(r4.Ok);
+        Assert.Contains(r4.Messages, m => m.Contains("rule set 'pricing' rule 'r1' output:"));
+
+        rs.Rules[0].OutputExpression = "subject.Amount - disc";
+        E(os, d.States.Single(s => s.Key == "ordered"), EffectKind.RunRules, "pricing", "");
+        var r5 = svc.Validate(os, d, Roles());
+        Assert.True(r5.Ok, string.Join("; ", r5.Messages));
+    }
+
+    [Fact] public void NewDraft_copies_rule_sets_deeply_and_guard_freezes_published_rule_sets()
+    {
+        var name = Unique();
+        Guid v1;
+        using (var os = db.NewObjectSpace())
+        {
+            var d = Draft(os, name);
+            var rs = RS(os, d, "pricing");
+            RP(os, rs, "disc", "subject.Amount * 0.1m");
+            RR(os, rs, "apply", "subject.Amount > 100m", "Amount", "subject.Amount - disc");
+            E(os, d.States.Single(s => s.Key == "ordered"), EffectKind.RunRules, "pricing", "");
+            os.CommitChanges();
+            Assert.True(svc.Publish(os, d, "tester", Roles()).Ok);
+            v1 = d.ID;
+        }
+
+        // Published rule set, param, and rule are frozen by DefinitionGuard
+        Refused(v1, (_, d) => d.RuleSets[0].Key = "hacked");
+        Refused(v1, (_, d) => d.RuleSets[0].Params[0].Expression = "0m");
+        Refused(v1, (_, d) => d.RuleSets[0].Rules[0].OutputExpression = "0m");
+        Refused(v1, (os, d) => RS(os, d, "extra"));
+        Refused(v1, (os, d) => RP(os, d.RuleSets[0], "p2", "1m"));
+        Refused(v1, (os, d) => RR(os, d.RuleSets[0], "r2", "true", "Amount", "1m", order: 99));
+
+        // NewDraft deep-copies RuleSets, Params, and Rules with fresh IDs, and draft edits touch the definition lock version
+        Guid v2;
+        using (var os = db.NewObjectSpace())
+        {
+            var draft = svc.NewDraft(os, name);
+            os.CommitChanges();
+            v2 = draft.ID;
+            var src = os.GetObjectByKey<WorkflowDefinition>(v1);
+            Assert.Single(draft.RuleSets);
+            Assert.NotEqual(src.RuleSets[0].ID, draft.RuleSets[0].ID);
+            Assert.NotEqual(src.RuleSets[0].Params[0].ID, draft.RuleSets[0].Params[0].ID);
+            Assert.NotEqual(src.RuleSets[0].Rules[0].ID, draft.RuleSets[0].Rules[0].ID);
+            Assert.Equal(DefinitionMapper.ToDef(src) with { Version = 2 }, DefinitionMapper.ToDef(draft), new DefComparer());
+        }
+        var lockBefore = LockVersion(v2);
+        using (var os = db.NewObjectSpace())
+        {
+            var draft = os.GetObjectByKey<WorkflowDefinition>(v2);
+            draft.RuleSets[0].Rules[0].OutputExpression = "subject.Amount - disc * 2m";
+            os.CommitChanges();
+        }
+        Assert.Equal(lockBefore + 1, LockVersion(v2));
+    }
+
+    [Fact] public void RuleSet_and_Rule_lookup_values_work()
+    {
+        using var os = db.NewObjectSpace();
+        var d = Draft(os, Unique());
+        var rs = RS(os, d, "pricing");
+        var rule = RR(os, rs, "apply", "true", "Amount", "10m");
+        var ordered = d.States.Single(s => s.Key == "ordered");
+        var runRulesEffect = E(os, ordered, EffectKind.RunRules, "pricing", "");
+
+        Assert.Equal(["pricing"], runRulesEffect.LookupValues(nameof(WorkflowEffect.Target), Roles));
+        var ruleTargets = rule.LookupValues(nameof(WorkflowRule.TargetMember), Roles).ToList();
+        Assert.Contains("Amount", ruleTargets);
+        Assert.Contains("Ordered", ruleTargets);
+        Assert.DoesNotContain("ID", ruleTargets);
     }
 }

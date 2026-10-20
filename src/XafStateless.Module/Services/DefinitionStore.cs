@@ -45,6 +45,17 @@ public sealed class DefinitionStore
         var transitions = RawSql.Rows<WorkflowTransition>(ctx, RawSql.ForeignKey<WorkflowTransition>(ctx, nameof(WorkflowTransition.Definition)), [id],
             nameof(WorkflowTransition.FromKey), nameof(WorkflowTransition.Trigger), nameof(WorkflowTransition.ToKey),
             nameof(WorkflowTransition.Criteria), nameof(WorkflowTransition.RequiredRole), nameof(WorkflowTransition.Order));
+        var ruleSets = RawSql.Rows<WorkflowRuleSet>(ctx, RawSql.ForeignKey<WorkflowRuleSet>(ctx, nameof(WorkflowRuleSet.Definition)), [id],
+            Id, nameof(WorkflowRuleSet.Key));
+        var rsIds = ruleSets.Select(r => (Guid)r[0]!).ToList();
+        var paramFk = RawSql.ForeignKey<WorkflowRuleParam>(ctx, nameof(WorkflowRuleParam.RuleSet));
+        var ruleParams = RawSql.Rows<WorkflowRuleParam>(ctx, paramFk, rsIds,
+                paramFk, nameof(WorkflowRuleParam.Order), nameof(WorkflowRuleParam.Name), nameof(WorkflowRuleParam.Expression))
+            .ToLookup(p => (Guid)p[0]!);
+        var ruleFk = RawSql.ForeignKey<WorkflowRule>(ctx, nameof(WorkflowRule.RuleSet));
+        var rules = RawSql.Rows<WorkflowRule>(ctx, ruleFk, rsIds,
+                ruleFk, nameof(WorkflowRule.Order), nameof(WorkflowRule.Name), nameof(WorkflowRule.Expression), nameof(WorkflowRule.TargetMember), nameof(WorkflowRule.OutputExpression))
+            .ToLookup(r => (Guid)r[0]!);
 
         var def = new WorkflowDef((string)head[0]!, (int)head[1]!, (string)head[2]!,
             states.Select(s => new StateDef((string)s[1]!, (string)s[2]!, (StateKind)(int)s[3]!, DefinitionMapper.Opt((string?)s[4]), (int?)s[5],
@@ -52,7 +63,12 @@ public sealed class DefinitionStore
                     .Select(e => new EffectDef((EffectKind)(int)e[2]!, (string)e[3]!, (string)e[4]!)).ToList(),
                 DefinitionMapper.Members((string?)s[6]))).ToList(),
             transitions.Select(t => new TransitionDef((string)t[0]!, (string)t[1]!, (string)t[2]!,
-                DefinitionMapper.Opt((string?)t[3]), DefinitionMapper.Opt((string?)t[4]), (int)t[5]!)).ToList());
+                DefinitionMapper.Opt((string?)t[3]), DefinitionMapper.Opt((string?)t[4]), (int)t[5]!)).ToList(),
+            ruleSets.Select(rs => new RuleSetDef((string)rs[1]!,
+                ruleParams[(Guid)rs[0]!].OrderBy(p => (int)p[1]!)
+                    .Select(p => new RuleParamDef((string)p[2]!, (string)p[3]!)).ToList(),
+                rules[(Guid)rs[0]!].OrderBy(r => (int)r[1]!)
+                    .Select(r => new RuleItemDef((string)r[2]!, (string)r[3]!, (string)r[4]!, (string)r[5]!, (int)r[1]!)).ToList())).ToList());
         return (def, (DefinitionState)(int)head[3]!);
     }
 }

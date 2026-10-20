@@ -1,4 +1,4 @@
-﻿using DevExpress.ExpressApp.EFCore.Updating;
+using DevExpress.ExpressApp.EFCore.Updating;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using DevExpress.Persistent.BaseImpl.EF.PermissionPolicy;
@@ -27,6 +27,9 @@ public class DemoEFCoreDbContext : DbContext {
     public DbSet<WorkflowState> WorkflowStates { get; set; }
     public DbSet<WorkflowEffect> WorkflowEffects { get; set; }
     public DbSet<WorkflowTransition> WorkflowTransitions { get; set; }
+    public DbSet<WorkflowRuleSet> WorkflowRuleSets { get; set; }
+    public DbSet<WorkflowRuleParam> WorkflowRuleParams { get; set; }
+    public DbSet<WorkflowRule> WorkflowRules { get; set; }
     public DbSet<WorkflowInstance> WorkflowInstances { get; set; }
     public DbSet<WorkflowTask> WorkflowTasks { get; set; }
     public DbSet<WorkflowNotification> WorkflowNotifications { get; set; }

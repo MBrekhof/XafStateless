@@ -77,7 +77,9 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         var instances = Changed<WorkflowInstance>(ctx);
         var (states, transitions, effects, definitions) = (Changed<WorkflowState>(ctx), Changed<WorkflowTransition>(ctx), Changed<WorkflowEffect>(ctx), Changed<WorkflowDefinition>(ctx));
         var (tasks, notifications) = (Changed<WorkflowTask>(ctx), Changed<WorkflowNotification>(ctx));
-        if (instances.Count + states.Count + transitions.Count + effects.Count + definitions.Count + tasks.Count + notifications.Count == 0) return;
+        var (ruleSets, ruleParams, rules) = (Changed<WorkflowRuleSet>(ctx), Changed<WorkflowRuleParam>(ctx), Changed<WorkflowRule>(ctx));
+        if (instances.Count + states.Count + transitions.Count + effects.Count + definitions.Count + tasks.Count + notifications.Count
+            + ruleSets.Count + ruleParams.Count + rules.Count == 0) return;
 
         var runtime = RuntimeScope.Allows(ctx);   // the scope counts only for the context it was opened for
         CheckInstances(ctx, instances, runtime);
@@ -92,6 +94,20 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
             Existing(states).Concat(effectStates.OfType<Guid>().Where(id => !(trackedStates.TryGetValue(id, out var s) && s.State == EntityState.Added))),
             nameof(WorkflowState.Definition));
         var transitionParents = PersistedParents<WorkflowTransition>(ctx, Existing(transitions), nameof(WorkflowTransition.Definition));
+        var paramParents = PersistedParents<WorkflowRuleParam>(ctx, Existing(ruleParams), nameof(WorkflowRuleParam.RuleSet));
+        var paramRuleSets = ruleParams.Select(p => Parent(p, nameof(WorkflowRuleParam.RuleSet), paramParents)).ToList();
+        var ruleParents = PersistedParents<WorkflowRule>(ctx, Existing(rules), nameof(WorkflowRule.RuleSet));
+        var ruleRuleSets = rules.Select(r => Parent(r, nameof(WorkflowRule.RuleSet), ruleParents)).ToList();
+        var trackedRuleSets = ctx.ChangeTracker.Entries<WorkflowRuleSet>().ToDictionary(e => e.Entity.ID);
+        var ruleSetParents = PersistedParents<WorkflowRuleSet>(ctx,
+            Existing(ruleSets)
+                .Concat(paramRuleSets.OfType<Guid>().Where(id => !(trackedRuleSets.TryGetValue(id, out var rs) && rs.State == EntityState.Added)))
+                .Concat(ruleRuleSets.OfType<Guid>().Where(id => !(trackedRuleSets.TryGetValue(id, out var rs) && rs.State == EntityState.Added))),
+            nameof(WorkflowRuleSet.Definition));
+
+        Guid? RuleSetOwner(Guid? ruleSetId) => ruleSetId is not { } id ? null
+            : trackedRuleSets.TryGetValue(id, out var rs) ? Parent(rs, nameof(WorkflowRuleSet.Definition), ruleSetParents)
+            : ruleSetParents.GetValueOrDefault(id);
 
         Guid? StateOwner(Guid? stateId) => stateId is not { } id ? null
             : trackedStates.TryGetValue(id, out var s) ? Parent(s, nameof(WorkflowState.Definition), stateParents)
@@ -100,6 +116,9 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         var owners = states.Select(e => Parent(e, nameof(WorkflowState.Definition), stateParents))
             .Concat(transitions.Select(e => Parent(e, nameof(WorkflowTransition.Definition), transitionParents)))
             .Concat(effectStates.Select(StateOwner))
+            .Concat(ruleSets.Select(e => Parent(e, nameof(WorkflowRuleSet.Definition), ruleSetParents)))
+            .Concat(paramRuleSets.Select(RuleSetOwner))
+            .Concat(ruleRuleSets.Select(RuleSetOwner))
             .ToList();
         if (owners.Any(o => o == null)) throw Refuse("a state, effect or transition must belong to a definition.");
 

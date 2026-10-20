@@ -633,4 +633,63 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
         var inst = Instance(id);
         Assert.Equal(("approval", v1), (inst.StateKey, inst.Definition!.ID));
     }
+
+    [Fact] public void RunRules_computes_params_and_updates_locked_members_and_decision_sees_it()
+    {
+        var name = Unique();
+        var def = new WorkflowDef(name, 1, "draft",
+            [
+                new("draft", "Draft", StateKind.Manual, Locked: ["Amount", "Revisions"]),
+                new("calculate", "Calculate", StateKind.Decision, OnEntry: [new(EffectKind.RunRules, "pricing", "")]),
+                new("vip-ordered", "VIP Ordered", StateKind.Final, OnEntry: [new(EffectKind.SetField, "Ordered", "true")]),
+                new("standard", "Standard", StateKind.Final),
+            ],
+            [
+                new("draft", "Submit", "calculate"),
+                new("calculate", "VIP", "vip-ordered", Criteria: "Amount < 900m && Revisions == 2", Order: 0),
+                new("calculate", "Standard", "standard", Order: 1),
+            ],
+            [
+                new("pricing",
+                    [new("disc", "subject.Amount * 0.2m")],
+                    [
+                        new("apply-disc", "subject.Amount >= 1000m", "Amount", "subject.Amount - disc", Order: 0),
+                        new("set-tier", "subject.Amount < 900m", "Revisions", "2", Order: 1),
+                    ]),
+            ]);
+        Publish(def);
+        var id = NewRequest(1000m);
+        var cold = new WorkflowRuntime(new DefinitionStore(), clock, actions);
+        Ok(cold.Start(Alice(), typeof(PurchaseRequest), id, name));
+        Ok(cold.Fire(Alice(), typeof(PurchaseRequest), id, "Submit"));
+
+        var req = Request(id);
+        Assert.Equal(("vip-ordered", 800m, 2, true), (Instance(id).StateKey, req.Amount, req.Revisions, req.Ordered));
+    }
+
+    [Fact] public void RunRules_overflow_is_refused_and_commits_nothing()
+    {
+        var name = Unique();
+        var def = new WorkflowDef(name, 1, "draft",
+            [
+                new("draft", "Draft", StateKind.Manual),
+                new("done", "Done", StateKind.Final, OnEntry: [new(EffectKind.RunRules, "overflow", "")]),
+            ],
+            [new("draft", "Go", "done")],
+            [
+                new("overflow", [], [new("boom", "true", "Revisions", "subject.Amount", Order: 0)]),
+            ]);
+        Publish(def);
+        var id = NewRequest(3_000_000_000m);
+        using (var os = db.NewObjectSpace())
+        {
+            os.GetObjectByKey<PurchaseRequest>(id).Revisions = int.MaxValue;
+            os.CommitChanges();
+        }
+        Ok(rt.Start(Alice(), typeof(PurchaseRequest), id, name));
+
+        var ex = Assert.IsType<UserFriendlyException>(Record.Exception(() => rt.Fire(Alice(), typeof(PurchaseRequest), id, "Go")));
+        Assert.Contains("Revisions", ex.Message);
+        Assert.Equal(("draft", int.MaxValue), (Instance(id).StateKey, Request(id).Revisions));
+    }
 }

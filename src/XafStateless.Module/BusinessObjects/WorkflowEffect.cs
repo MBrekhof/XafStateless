@@ -26,6 +26,7 @@ public class WorkflowEffect : BaseObject, IStringLookupSource
         {
             EffectKind.Notify => [EffectDef.Requester, .. roleNames()],
             EffectKind.RunAction => actionNames(),
+            EffectKind.RunRules => State?.Definition?.RuleSets.Select(r => r.Key).Where(k => !string.IsNullOrWhiteSpace(k)) ?? [],
             _ => XafTypesInfo.Instance.FindTypeInfo(State?.Definition?.TargetTypeName ?? "") is { } target
                 ? (Kind == EffectKind.Increment ? WorkflowMembers.Counters(target) : WorkflowMembers.Supported(target)).Select(m => m.Name)
                 : [],

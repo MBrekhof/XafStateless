@@ -30,6 +30,7 @@ public class WorkflowDefinition : BaseObject, IStringLookupSource
 
     [Aggregated] public virtual IList<WorkflowState> States { get; set; } = new ObservableCollection<WorkflowState>();
     [Aggregated] public virtual IList<WorkflowTransition> Transitions { get; set; } = new ObservableCollection<WorkflowTransition>();
+    [Aggregated] public virtual IList<WorkflowRuleSet> RuleSets { get; set; } = new ObservableCollection<WorkflowRuleSet>();
 
     [NotMapped, Browsable(false)] public Type? TargetType => XafTypesInfo.Instance.FindTypeInfo(TargetTypeName)?.Type;
 

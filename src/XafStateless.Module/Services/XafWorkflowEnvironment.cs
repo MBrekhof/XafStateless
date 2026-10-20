@@ -34,6 +34,7 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
             return WorkflowMembers.IsIntegral(counter.MemberType) && step != decimal.Truncate(step)
                 ? $"'{effect.Value}' is not a whole step for '{effect.Target}'" : null;
         }
+        if (effect.Kind == EffectKind.RunRules) return null;
         if (effect.Kind == EffectKind.RunAction)
             return (actionNames ?? []).Contains(effect.Target)
                 ? BadPlaceholder(effect.Value ?? "")
@@ -64,6 +65,9 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
 
     public string? CheckMember(string member) =>
         WorkflowMembers.Supported(target).Any(m => m.Name == member) ? null : $"'{member}' is not a member of {target.Name} that a workflow may use";
+
+    public string? CheckRuleSet(RuleSetDef ruleSet) =>
+        RuleSetEvaluator.Validate(ruleSet, target.Type, m => WorkflowMembers.Supported(target).FirstOrDefault(x => x.Name == m)?.MemberType);
 
     /// <summary>An Increment's step: null or "" is 1, else an invariant-culture decimal.</summary>
     internal static bool TryStep(string? value, out decimal step)

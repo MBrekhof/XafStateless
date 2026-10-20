@@ -15,7 +15,8 @@ public static class WorkflowPermissions
 {
     public const string NavigationGroup = "Application/NavigationItems/Items/Workflow/Items/";
 
-    static readonly Type[] DefinitionTypes = [typeof(WorkflowDefinition), typeof(WorkflowState), typeof(WorkflowTransition), typeof(WorkflowEffect)];
+    static readonly Type[] DefinitionTypes = [typeof(WorkflowDefinition), typeof(WorkflowState), typeof(WorkflowTransition), typeof(WorkflowEffect),
+        typeof(WorkflowRuleSet), typeof(WorkflowRuleParam), typeof(WorkflowRule)];
     static readonly Type[] RuntimeTypes = [typeof(WorkflowInstance), typeof(WorkflowTask), typeof(WorkflowNotification)];
 
     /// <summary>CRUD on the definition types; read on instances, tasks and notifications; the Workflow navigation group.

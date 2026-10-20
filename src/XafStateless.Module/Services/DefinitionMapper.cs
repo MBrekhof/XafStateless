@@ -1,4 +1,4 @@
-﻿using DevExpress.ExpressApp;
+using DevExpress.ExpressApp;
 using XafStateless.Engine;
 using XafStateless.Module.BusinessObjects;
 
@@ -16,7 +16,10 @@ public static class DefinitionMapper
         return new(Req(d.Name), d.Version, Req(d.InitialStateKey),
             d.States.Where(Live).Select(s => new StateDef(Req(s.Key), Req(s.Caption), s.Kind, Opt(s.TaskRole), s.WaitMinutes,
                 s.Effects.Where(Live).OrderBy(e => e.Order).Select(e => new EffectDef(e.Kind, e.Target, e.Value)).ToList(), Members(s.LockedMembers))).ToList(),
-            d.Transitions.Where(Live).Select(t => new TransitionDef(Req(t.FromKey), Req(t.Trigger), Req(t.ToKey), Opt(t.Criteria), Opt(t.RequiredRole), t.Order)).ToList());
+            d.Transitions.Where(Live).Select(t => new TransitionDef(Req(t.FromKey), Req(t.Trigger), Req(t.ToKey), Opt(t.Criteria), Opt(t.RequiredRole), t.Order)).ToList(),
+            d.RuleSets.Where(Live).Select(rs => new RuleSetDef(Req(rs.Key),
+                rs.Params.Where(Live).OrderBy(p => p.Order).Select(p => new RuleParamDef(Req(p.Name), Req(p.Expression))).ToList(),
+                rs.Rules.Where(Live).OrderBy(r => r.Order).Select(r => new RuleItemDef(Req(r.Name), Req(r.Expression), Req(r.TargetMember), Req(r.OutputExpression), r.Order)).ToList())).ToList());
     }
 
     /// <summary>The engine's definition -> a new Draft graph in <paramref name="os"/> (not committed), for seeding a host
@@ -43,6 +46,24 @@ public static class DefinitionMapper
             var tr = os.CreateObject<WorkflowTransition>();
             (tr.FromKey, tr.Trigger, tr.ToKey, tr.Criteria, tr.RequiredRole, tr.Order) = (t.From, t.Trigger, t.To, t.Criteria, t.RequiredRole, t.Order);
             d.Transitions.Add(tr);
+        }
+        foreach (var rs in def.RuleSetList)
+        {
+            var ruleSet = os.CreateObject<WorkflowRuleSet>();
+            ruleSet.Key = rs.Key;
+            foreach (var p in rs.Params)
+            {
+                var param = os.CreateObject<WorkflowRuleParam>();
+                (param.Order, param.Name, param.Expression) = (ruleSet.Params.Count, p.Name, p.Expression);
+                ruleSet.Params.Add(param);
+            }
+            foreach (var r in rs.Rules)
+            {
+                var rule = os.CreateObject<WorkflowRule>();
+                (rule.Order, rule.Name, rule.Expression, rule.TargetMember, rule.OutputExpression) = (r.Order, r.Name, r.Expression, r.TargetMember, r.OutputExpression);
+                ruleSet.Rules.Add(rule);
+            }
+            d.RuleSets.Add(ruleSet);
         }
         return d;
     }

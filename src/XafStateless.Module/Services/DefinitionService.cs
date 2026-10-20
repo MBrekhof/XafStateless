@@ -60,6 +60,24 @@ public sealed class DefinitionService(DefinitionStore store, WorkflowActionCatal
             (copy.FromKey, copy.Trigger, copy.ToKey, copy.Criteria, copy.RequiredRole, copy.Order) = (t.FromKey, t.Trigger, t.ToKey, t.Criteria, t.RequiredRole, t.Order);
             draft.Transitions.Add(copy);
         }
+        foreach (var rs in src.RuleSets)
+        {
+            var ruleSet = os.CreateObject<WorkflowRuleSet>();
+            ruleSet.Key = rs.Key;
+            foreach (var p in rs.Params)
+            {
+                var param = os.CreateObject<WorkflowRuleParam>();
+                (param.Order, param.Name, param.Expression) = (p.Order, p.Name, p.Expression);
+                ruleSet.Params.Add(param);
+            }
+            foreach (var r in rs.Rules)
+            {
+                var rule = os.CreateObject<WorkflowRule>();
+                (rule.Order, rule.Name, rule.Expression, rule.TargetMember, rule.OutputExpression) = (r.Order, r.Name, r.Expression, r.TargetMember, r.OutputExpression);
+                ruleSet.Rules.Add(rule);
+            }
+            draft.RuleSets.Add(ruleSet);
+        }
         return draft;
     }
 

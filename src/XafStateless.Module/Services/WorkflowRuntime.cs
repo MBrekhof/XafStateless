@@ -288,6 +288,23 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, W
                                  ?? throw new InvalidOperationException($"workflow action '{effect.Target}' is not registered in this application");
                     action.Run(new WorkflowActionContext(x.Os, x.Subject, Fill(x, effect.Value ?? "")));   // no argument is ""
                     break;
+                case EffectKind.RunRules:
+                    var ruleSet = x.Def!.RuleSet(effect.Target)
+                                  ?? throw new InvalidOperationException($"rule set '{effect.Target}' does not exist in workflow '{x.Def.Name}'");
+                    RuleSetEvaluator.Apply(ruleSet, x.Type.Type, x.Subject, (memberName, val) =>
+                    {
+                        var member = WorkflowMembers.Supported(x.Type).FirstOrDefault(m => m.Name == memberName)
+                                     ?? throw new InvalidOperationException($"'{memberName}' cannot be set by a workflow");
+                        Write(x, member, m =>
+                        {
+                            try { return RuleSetEvaluator.ConvertOutput(m.MemberType, val); }
+                            catch (Exception ex) when (ex is OverflowException or FormatException or InvalidCastException or ArgumentException)
+                            {
+                                throw new UserFriendlyException($"rule set '{ruleSet.Key}' cannot set '{m.Name}': {ex.Message}");
+                            }
+                        });
+                    });
+                    break;
                 default:
                     throw new InvalidOperationException($"unknown effect kind {effect.Kind}");
             }
