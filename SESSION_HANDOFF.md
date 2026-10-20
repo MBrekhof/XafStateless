@@ -1,4 +1,21 @@
-# Session handoff — 2026-10-18
+# Session handoff — 2026-10-20
+
+## This session (2026-10-20): 0.2.1 security patch, diagram labels drew markup as HTML
+
+Reported by a downstream host and reproduced in Chromium: on the published 0.2.0 (Mermaid 11, default HTML labels,
+`innerHTML`), a state caption such as `<img src=//example.invalid/pixel.png>Draft` (also a trigger, task role, criteria
+or locked member) became a live `<img>` and the browser fetched the URL. The renderer swap of 2026-10-18 (5811008,
+beautiful-mermaid escapes label text; only attribute-free `<b>`/`<i>`/`<u>`/`<s>` become SVG `<tspan>`) already fixes it,
+but it was never published. `WorkflowMermaid.Escape` keeps `<` and `>` on purpose (`Amount > 1000` is a legitimate caption).
+
+Decision (Martin away, taken by Claude, Codex agreed): release **0.2.1 from branch `release/0.2.1` = 5811008 + this
+patch**, not from master. Master's XSM-035 commits (rules engine, three new entities = a schema change for every host)
+had no release decision. 0.2.0 → 0.2.1 has no schema change; hosts do see the new diagram look (ELK layout).
+New regression test `tests/XafStateless.E2E/DiagramMarkupTests.cs` (no demo needed): fails on 0.2.0's scripts (5 live
+`<img>`), passes on 0.2.1, light and dark. Tests: `dotnet test XafStateless.slnx` → Engine 53, Module 141, green.
+The branch is merged into master; the next master release must be 0.3.0 or higher.
+
+# Previous session — 2026-10-18
 
 ## This session (2026-10-18): Diagram renderer switched to beautiful-mermaid 1.1.3
 

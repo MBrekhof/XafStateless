@@ -19,6 +19,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- DiagramMarkupTests draws the real WorkflowMermaid text. -->
+    <ProjectReference Include="..\..\src\XafStateless.Engine\XafStateless.Engine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="NUnit.Framework" />
   </ItemGroup>
 

@@ -85,6 +85,9 @@ Coverage:
   v2 with a new Finance step, sees Publish disabled and the step marked until it has a way out, and shows that a v2
   request passes Finance while a v1 request started earlier does not. A second test picks the target type of a new
   definition.
+- Diagram labels: `DiagramMarkupTests` in the same project loads the shipped diagram scripts into a blank page (no demo
+  needed: `dotnet test tests\XafStateless.E2E --filter FullyQualifiedName~DiagramMarkupTests`) and checks that markup in
+  a caption, trigger, role, criteria or locked member draws as text, light and dark.
 
 Host trial: the module was added to a second XAF host (its own job framework, Hangfire, Web API) by following
 [docs/integrating.md](docs/integrating.md), with no module change; results and findings are in
