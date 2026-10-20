@@ -6,6 +6,7 @@ public interface IWorkflowEnvironment
     string? CheckCriteria(string criteria);      // null = ok, else the error text
     string? CheckEffect(EffectDef effect);       // null = ok (member exists, writable, value converts; template placeholders exist)
     string? CheckMember(string member);          // null = ok (a member effects and locks may use)
+    string? CheckRuleSet(RuleSetDef ruleSet) => null;   // null = ok (expressions parse and target members/types match)
 }
 
 /// <summary>One validation finding. <see cref="State"/> names the state it is about (null: the definition as a whole, or
@@ -42,6 +43,8 @@ public static class WorkflowValidator
         foreach (var g in def.Transitions.GroupBy(t => (t.From, t.Trigger)).Where(g => g.Count() > 1))
             errs.Add(new($"duplicate trigger '{g.Key.Trigger}' from '{g.Key.From}'", keys.Contains(g.Key.From) ? g.Key.From : null));
         if (errs.Count > 0) return errs;   // graph rules below assume a well-formed graph
+
+        CheckRuleSets(def, env, errs);
 
         var reach = Bfs([def.InitialState], k => def.From(k).Select(t => t.To));
         IEnumerable<string> Into(string k) => def.Transitions.Where(t => t.To == k).Select(t => t.From);
@@ -91,6 +94,8 @@ public static class WorkflowValidator
                     if (env.RoleExists(EffectDef.Requester)) Add($"a role named '{EffectDef.Requester}' conflicts with the requester recipient");
                 }
                 else if (e.Kind == EffectKind.Notify && !env.RoleExists(e.Target)) Add($"role '{e.Target}' does not exist");
+                else if (e.Kind == EffectKind.RunRules && def.RuleSet(e.Target) == null)
+                    Add($"effect on '{s.Key}': rule set '{e.Target}' does not exist");
                 if (env.CheckEffect(e) is { } err) Add($"effect on '{s.Key}': {err}");
             }
             foreach (var m in s.LockedMembers)
@@ -104,6 +109,42 @@ public static class WorkflowValidator
         // Spans several states; one nullable State cannot mark them all, so it stays definition-level.
         if (DecisionLoop(def) is { } loop) errs.Add(new($"decisions {string.Join(" → ", loop.Select(k => $"'{k}'"))} form a loop"));
         return errs;
+    }
+
+    static void CheckRuleSets(WorkflowDef def, IWorkflowEnvironment env, List<Finding> errs)
+    {
+        var rsKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var rs in def.RuleSetList)
+        {
+            if (string.IsNullOrWhiteSpace(rs.Key)) { errs.Add(new("a rule set has no key")); continue; }
+            if (!rsKeys.Add(rs.Key)) errs.Add(new($"duplicate rule set '{rs.Key}'"));
+            if (rs.Rules.Count == 0) errs.Add(new($"rule set '{rs.Key}' has no rules"));
+
+            var paramNames = new HashSet<string>(StringComparer.Ordinal);
+            var structuralOk = rs.Rules.Count > 0;
+            foreach (var p in rs.Params)
+            {
+                if (string.IsNullOrWhiteSpace(p.Name)) { errs.Add(new($"rule set '{rs.Key}' has a parameter with no name")); structuralOk = false; }
+                else if (p.Name == RuleSetEvaluator.SubjectParamName) { errs.Add(new($"rule set '{rs.Key}' parameter '{RuleSetEvaluator.SubjectParamName}' is reserved")); structuralOk = false; }
+                else if (!paramNames.Add(p.Name)) { errs.Add(new($"rule set '{rs.Key}' has duplicate parameter '{p.Name}'")); structuralOk = false; }
+                if (string.IsNullOrWhiteSpace(p.Expression)) { errs.Add(new($"rule set '{rs.Key}' parameter '{p.Name}' has no expression")); structuralOk = false; }
+            }
+
+            var ruleNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var r in rs.Rules)
+            {
+                if (string.IsNullOrWhiteSpace(r.Name)) { errs.Add(new($"rule set '{rs.Key}' has a rule with no name")); structuralOk = false; }
+                else if (!ruleNames.Add(r.Name)) { errs.Add(new($"rule set '{rs.Key}' has duplicate rule '{r.Name}'")); structuralOk = false; }
+                if (string.IsNullOrWhiteSpace(r.Expression)) { errs.Add(new($"rule set '{rs.Key}' rule '{r.Name}' has no condition")); structuralOk = false; }
+                if (string.IsNullOrWhiteSpace(r.TargetMember)) { errs.Add(new($"rule set '{rs.Key}' rule '{r.Name}' has no target member")); structuralOk = false; }
+                if (string.IsNullOrWhiteSpace(r.OutputExpression)) { errs.Add(new($"rule set '{rs.Key}' rule '{r.Name}' has no output expression")); structuralOk = false; }
+            }
+            foreach (var g in rs.Rules.GroupBy(r => r.Order).Where(g => g.Count() > 1))
+                errs.Add(new($"rule set '{rs.Key}' has duplicate order {g.Key}"));
+
+            if (structuralOk && env.CheckRuleSet(rs) is { } envErr)
+                errs.Add(new(envErr));
+        }
     }
 
     static HashSet<string> Bfs(IEnumerable<string> start, Func<string, IEnumerable<string>> next)

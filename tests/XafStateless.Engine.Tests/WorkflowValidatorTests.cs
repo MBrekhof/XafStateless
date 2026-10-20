@@ -7,6 +7,7 @@ sealed class FakeEnv(params string[] roles) : IWorkflowEnvironment
     public string? CheckCriteria(string c) => c.Contains("Nope") ? "unknown member Nope" : null;
     public string? CheckEffect(EffectDef e) => e.Target == "Nope" ? "unknown member Nope" : null;
     public string? CheckMember(string m) => m == "Nope" ? "unknown member Nope" : null;
+    public string? CheckRuleSet(RuleSetDef rs) => rs.Key == "bad-env" ? "rule set 'bad-env' failed env check" : null;
 }
 
 public class WorkflowValidatorTests
@@ -314,5 +315,65 @@ public class WorkflowValidatorTests
         Assert.DoesNotContain(errs, e => e.Contains("'Amount'"));
         Assert.Equal(["Amount", "Nope"], d.State("approval").LockedMembers);
         Assert.Empty(Pr.State("approval").LockedMembers);
+    }
+
+    [Fact] public void RuleSet_and_RunRules_validation()
+    {
+        var validRule = new RuleItemDef("r1", "subject.Amount > 0", "Amount", "100m", Order: 0);
+        var dValid = Pr with
+        {
+            RuleSets = [new RuleSetDef("pricing", [new RuleParamDef("disc", "10m")], [validRule])],
+            States = Pr.States.Select(s => s.Key == "ordered" ? s with { OnEntry = [new(EffectKind.RunRules, "pricing", "")] } : s).ToList()
+        };
+        Assert.Empty(V(dValid));
+
+        var dMissingRs = Pr with
+        {
+            States = Pr.States.Select(s => s.Key == "ordered" ? s with { OnEntry = [new(EffectKind.RunRules, "missing-rs", "")] } : s).ToList()
+        };
+        var fMissing = WorkflowValidator.Check(dMissingRs, Env);
+        Assert.Contains(fMissing, x => x.State == "ordered" && x.Message == "effect on 'ordered': rule set 'missing-rs' does not exist");
+
+        var dDupKey = Pr with
+        {
+            RuleSets = [new RuleSetDef("pricing", [], [validRule]), new RuleSetDef("pricing", [], [validRule])]
+        };
+        Assert.Contains(V(dDupKey), e => e == "duplicate rule set 'pricing'");
+
+        var dEmptyRules = Pr with { RuleSets = [new RuleSetDef("pricing", [], [])] };
+        Assert.Contains(V(dEmptyRules), e => e == "rule set 'pricing' has no rules");
+
+        var dReservedParam = Pr with
+        {
+            RuleSets = [new RuleSetDef("pricing", [new RuleParamDef("subject", "1")], [validRule])]
+        };
+        Assert.Contains(V(dReservedParam), e => e == "rule set 'pricing' parameter 'subject' is reserved");
+
+        var dDupParam = Pr with
+        {
+            RuleSets = [new RuleSetDef("pricing", [new RuleParamDef("p1", "1"), new RuleParamDef("p1", "2")], [validRule])]
+        };
+        Assert.Contains(V(dDupParam), e => e == "rule set 'pricing' has duplicate parameter 'p1'");
+
+        var dDupRuleAndOrder = Pr with
+        {
+            RuleSets = [new RuleSetDef("pricing", [], [validRule, validRule])]
+        };
+        var errsDup = V(dDupRuleAndOrder);
+        Assert.Contains(errsDup, e => e == "rule set 'pricing' has duplicate rule 'r1'");
+        Assert.Contains(errsDup, e => e == "rule set 'pricing' has duplicate order 0");
+
+        var dEnvErr = Pr with { RuleSets = [new RuleSetDef("bad-env", [], [validRule])] };
+        Assert.Contains(V(dEnvErr), e => e == "rule set 'bad-env' failed env check");
+    }
+
+    [Fact] public void Mermaid_details_includes_run_rules()
+    {
+        var d = Pr with
+        {
+            States = Pr.States.Select(s => s.Key == "ordered" ? s with { OnEntry = [new(EffectKind.RunRules, "pricing", "")] } : s).ToList()
+        };
+        var mermaid = WorkflowMermaid.Format(d, new DiagramStyle(Details: true));
+        Assert.Contains("rules pricing", mermaid);
     }
 }

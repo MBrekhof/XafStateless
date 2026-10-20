@@ -3,7 +3,7 @@ using System.Text;
 namespace XafStateless.Engine;
 
 /// <summary>How the diagram marks states (XSM-027/028): colored by kind, problem states in red, the current state with a
-/// thick border, and optional state/transition details (roles, wait duration, locked fields, criteria). Null parts draw nothing extra.</summary>
+/// thick border, and optional state/transition details (roles, wait duration, locked fields, rules, criteria). Null parts draw nothing extra.</summary>
 public sealed record DiagramStyle(bool ByKind = false, IReadOnlySet<string>? Problems = null, string? Current = null, bool Details = false);
 
 public static class WorkflowMermaid
@@ -62,6 +62,8 @@ public static class WorkflowMermaid
             if (s.Kind == StateKind.Task && !string.IsNullOrWhiteSpace(s.TaskRole)) lines.Add(Escape(s.TaskRole));
             if (s.Kind == StateKind.Wait && s.WaitMinutes is > 0) lines.Add($"{s.WaitMinutes} min");
             if (s.LockedMembers.Count > 0) lines.Add($"locks {string.Join(", ", s.LockedMembers.Select(Escape))}");
+            var ruleKeys = s.Effects.Where(e => e.Kind == EffectKind.RunRules && !string.IsNullOrWhiteSpace(e.Target)).Select(e => Escape(e.Target)).ToList();
+            if (ruleKeys.Count > 0) lines.Add($"rules {string.Join(", ", ruleKeys)}");
         }
         return string.Join("<br/>", lines);
     }
