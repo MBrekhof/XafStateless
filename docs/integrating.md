@@ -301,6 +301,12 @@ non-abstract class implementing `IWorkflowSubject`, by caption; the full class n
 `WorkflowRuntime.RunDueTimers(Func<IObjectSpace> newCommandSpace)` fires every Wait state whose time is due. It returns
 the number fired. Call it from any scheduler about once a minute.
 
+A timer whose command is refused with an `IUserFriendlyException` (the host's save validation throws XAF's
+`ValidationException` because the subject breaks a rule; an Increment past its range; an action's refusal) is skipped
+and logged as a warning through `ILogger<WorkflowRuntime>` (`Workflow timer of instance {InstanceId} refused:
+{Reason}`). Nothing of it is committed and it stays due, so each tick tries again and warns again until the record is
+fixed. Other exceptions fail the tick: `RunDueTimers` throws an `AggregateException` after the other instances have run.
+
 `INonSecuredObjectSpaceFactory` is registered **scoped**, so create a DI scope per run. The demo's `BackgroundService`
 (`XafStateless.Demo.Blazor.Server/WorkflowTimerService.cs`):
 
@@ -412,8 +418,9 @@ The contract an action keeps, because nothing enforces it:
   the runtime's write permit, so the guards cannot tell its writes from the runtime's.
 - It does not change the subject's locked members. The lock guard refuses that, unless a Set field or Increment of the
   same state writes the member too (their exemption covers the whole command). Change the subject with those effects.
-- An exception aborts the command with nothing committed; a `UserFriendlyException` reaches the user as the message,
-  other exceptions propagate (the timer collects them). A command is retried on a lost race, up to four attempts, so an
+- An exception aborts the command with nothing committed; an `IUserFriendlyException` (`UserFriendlyException`,
+  `ValidationException`) reaches the user as the message, or in a timer is logged as a warning (step 8); other
+  exceptions propagate (the timer collects them). A command is retried on a lost race, up to four attempts, so an
   action can run more than once while only the last attempt commits: external side effects (mail, a payment, a job on
   another connection) belong in an outbox row the host delivers, like notifications (step 9), never in the action.
 

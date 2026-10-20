@@ -103,6 +103,36 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         return d.ID;
     }
 
+    /// <param name="refused">Retired: the first commit (v1 retired) is refused; Published: the first passes and the second
+    /// (the draft published) is refused, inside the same transaction.</param>
+    [Theory, InlineData(DefinitionState.Retired), InlineData(DefinitionState.Published)]
+    public void Publish_refused_by_save_validation_is_reported_and_leaves_nothing_pending(DefinitionState refused)   // WF-010
+    {
+        var name = Unique();
+        var v1 = PublishNew(name);
+        var refuse = true;
+        using var os = db.NewObjectSpace().Refuse(o => refuse && o is WorkflowDefinition w && w.State == refused);
+        var draft = svc.NewDraft(os, name);
+        os.CommitChanges();
+
+        var r = svc.Publish(os, draft, "tester", Roles());
+
+        Assert.False(r.Ok);
+        Assert.Equal([RefusingSaves.Message], r.Messages);
+        Assert.False(os.IsModified);
+        Assert.Equal(DefinitionState.Published, os.GetObjectByKey<WorkflowDefinition>(v1).State);   // not a pending Retired
+        // Refresh recreated the DbContext: re-read the draft, as a view's current object is re-read.
+        var reread = os.GetObjectByKey<WorkflowDefinition>(draft.ID);
+        Assert.Equal((DefinitionState.Draft, (string?)null, (DateTime?)null), (reread.State, reread.PublishedBy, reread.PublishedUtc));
+        Assert.Equal((DefinitionState.Published, DefinitionState.Draft), (StateOf(v1), StateOf(draft.ID)));
+
+        // The same object space publishes once the rule no longer refuses.
+        refuse = false;
+        var again = svc.Publish(os, reread, "tester", Roles());
+        Assert.True(again.Ok, string.Join("; ", again.Messages));
+        Assert.Equal((DefinitionState.Retired, DefinitionState.Published), (StateOf(v1), StateOf(draft.ID)));
+    }
+
     DefinitionState StateOf(Guid id)
     {
         using var os = db.NewObjectSpace();

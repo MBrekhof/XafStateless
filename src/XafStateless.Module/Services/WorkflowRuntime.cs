@@ -4,6 +4,7 @@ using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.DC;
 using DevExpress.ExpressApp.EFCore;
 using DevExpress.ExpressApp.Security;
+using Microsoft.Extensions.Logging;
 using XafStateless.Engine;
 using XafStateless.Module.BusinessObjects;
 
@@ -29,7 +30,9 @@ public sealed record WorkflowCaller(string Name, Func<string, bool> InRole, IObj
 /// Entry points split by who may cause them: Fire leaves Manual states, Decide leaves Task states, RunDueTimers leaves Wait
 /// states, Decision states leave automatically.
 /// </summary>
-public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, WorkflowActionCatalog? actions = null)
+/// <param name="log">Where <see cref="RunDueTimers"/> reports a refused timer (DI supplies it in any host with logging; null: not reported).</param>
+public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, WorkflowActionCatalog? actions = null,
+    ILogger<WorkflowRuntime>? log = null)
 {
     readonly WorkflowActionCatalog catalog = actions ?? WorkflowActionCatalog.Empty;
 
@@ -130,8 +133,10 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, W
         }, _ => $"'{outcome}' decided.");
 
     /// <summary>Fires every due Wait instance (id order), each as its own command with caller "system". An instance another
-    /// writer already moved, or that lost the race on all attempts, is skipped (counted as not fired); any other failure is
-    /// collected and rethrown as an AggregateException after the rest have run.</summary>
+    /// writer already moved, or that lost the race on all attempts, is skipped (counted as not fired). One whose command is
+    /// refused with an IUserFriendlyException (the host's save validation, an Increment past its range, an action's refusal)
+    /// is skipped and logged as a warning; it stays due, so the next tick tries again (WF-010). Any other failure is collected
+    /// and rethrown as an AggregateException after the rest have run.</summary>
     public int RunDueTimers(Func<IObjectSpace> newCommandSpace)
     {
         var now = Now;
@@ -154,6 +159,10 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, W
                 if (r.Ok) fired++;
                 else if (r.Message is not (NotDue or LostRaceMessage))   // only those two are skips; anything else is a failure
                     failures.Add(new InvalidOperationException($"Workflow timer of instance {id}: {r.Message}"));
+            }
+            catch (Exception ex) when (ex is IUserFriendlyException)
+            {
+                log?.LogWarning("Workflow timer of instance {InstanceId} refused: {Reason}", id, ex.Message);
             }
             catch (Exception ex) { failures.Add(ex); }
         }

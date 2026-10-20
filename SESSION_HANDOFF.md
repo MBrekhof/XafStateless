@@ -1,4 +1,17 @@
-# Session handoff — 2026-10-20
+# Session handoff — 2026-10-21
+
+## This session (2026-10-21): WF-010, a commit refused by the host's save validation
+
+A host that validates every commit (an `IObjectSpace.Committing` handler throwing XAF's `ValidationException`, an
+`IUserFriendlyException` but not a `UserFriendlyException`, as BPG's generated save validation does) broke two paths.
+`DefinitionService.Publish` now catches `IUserFriendlyException` and returns the rule's message. `RunDueTimers` skips a
+refused timer and logs a warning through a new optional `ILogger<WorkflowRuntime>` constructor parameter (Martin:
+"skip + warn"). The instance stays due, so the warning repeats each tick. Other exceptions still fail the tick. The demo's
+batch Start no longer stops at a refused request. Plan: `docs/plans/2026-10-20-wf-010-validation-refusals.md`; test
+helper `tests/XafStateless.Module.Tests/RefusingSaves.cs`. Tests: Engine 58, Module 153, green. Not released: it ships
+with master's next release (0.3.0 or higher).
+
+# Previous session — 2026-10-20
 
 ## This session (2026-10-20): 0.2.1 security patch, diagram labels drew markup as HTML
 

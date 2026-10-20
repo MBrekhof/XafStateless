@@ -54,7 +54,7 @@ public sealed class StartRequestsController : ObjectViewController<DetailView, S
         var results = ids.Select(id =>
         {
             try { return runtime.Start(caller, typeof(PurchaseRequest), id, screen.Definition); }
-            catch (UserFriendlyException ex) { return new RunResult(false, ex.Message, []); }
+            catch (Exception ex) when (ex is IUserFriendlyException) { return new RunResult(false, ex.Message, []); }   // also a host's ValidationException
         }).ToList();
         var started = results.Count(r => r.Ok);
         var message = $"Started {started} of {ids.Count}." + (results.FirstOrDefault(r => !r.Ok) is { } refused ? " " + refused.Message : "");

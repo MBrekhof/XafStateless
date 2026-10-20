@@ -119,7 +119,8 @@ public sealed class DefinitionService(DefinitionStore store, WorkflowActionCatal
             }
             tx.Commit();
         }
-        catch (Exception ex) when (LostRace.Is(ex) || ex is UserFriendlyException)
+        // IUserFriendlyException, not only UserFriendlyException: a host's save validation throws ValidationException (WF-010).
+        catch (Exception ex) when (LostRace.Is(ex) || ex is IUserFriendlyException)
         {
             os.Refresh();   // the transaction rolled back: drop what the object space accepted inside it (nothing else was pending)
             return new(false, [LostRace.Is(ex) ? LostRaceMessage : ex.Message]);

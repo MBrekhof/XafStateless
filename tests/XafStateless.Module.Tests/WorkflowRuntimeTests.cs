@@ -6,6 +6,7 @@ using DevExpress.Persistent.BaseImpl.EF.PermissionPolicy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using XafStateless.Demo.Module.BusinessObjects;
 using XafStateless.Engine;
 using XafStateless.Module.BusinessObjects;
@@ -571,6 +572,101 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
         Assert.Equal("ordered", after.StateKey);
         Assert.Null(after.DueUtc);
         Assert.True(Request(id).Ordered);
+    }
+
+    // WF-010: a host that validates every commit refuses one whose subject breaks a rule (RefusingSaves).
+    sealed class ListLogger : ILogger<WorkflowRuntime>
+    {
+        public readonly List<(LogLevel Level, string Message)> Entries = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, formatter(state, exception)));
+    }
+
+    const string Invalid = "Invalid ";
+    static bool BreaksRule(object o) => o is PurchaseRequest p && p.Title.StartsWith(Invalid);
+
+    /// <summary>Two instances due one minute after <paramref name="year"/> starts (a year no other test uses, so only these
+    /// two are due): one whose subject breaks the rule, one that does not.</summary>
+    (Guid Bad, Guid BadInstance, Guid Good) TwoDueInstances(int year)
+    {
+        clock.Now = new DateTimeOffset(year, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var (bad, badInst) = Started(5000, title: Invalid + Guid.NewGuid().ToString("N"));
+        Ok(rt.Decide(Alice(), OpenTask(badInst), "Approve"));
+        var (good, goodInst) = Started(5000);
+        Ok(rt.Decide(Alice(), OpenTask(goodInst), "Approve"));
+        clock.Now = clock.Now.AddSeconds(61);
+        return (bad, badInst, good);
+    }
+
+    [Fact] public void Timer_refused_by_save_validation_is_skipped_and_warned()
+    {
+        var (bad, badInst, good) = TwoDueInstances(2019);
+        var log = new ListLogger();
+        var logged = new WorkflowRuntime(new DefinitionStore(), clock, actions, log);
+        var spaces = 0;
+        IObjectSpace Refusing() { spaces++; return db.NewObjectSpace().Refuse(BreaksRule); }
+
+        Assert.Equal(1, logged.RunDueTimers(Refusing));   // no exception: a refusal is not a failure of the tick
+        Assert.Equal(3, spaces);   // the due query + one attempt per instance: a refusal is not retried like a lost race
+
+        Assert.Equal("ordered", Instance(good).StateKey);
+        var refused = Instance(bad);
+        Assert.Equal(("wait-cooling", (DateTime?)new DateTime(2019, 1, 1, 0, 1, 0)), (refused.StateKey, refused.DueUtc));   // still due
+        var warning = Assert.Single(log.Entries);
+        Assert.Equal(LogLevel.Warning, warning.Level);
+        Assert.Contains(badInst.ToString(), warning.Message);
+        Assert.Contains(RefusingSaves.Message, warning.Message);
+
+        Assert.Equal(0, logged.RunDueTimers(Refusing));   // the next tick tries again and says so again
+        Assert.Equal(2, log.Entries.Count);
+
+        Assert.Equal(1, rt.RunDueTimers(db.NewObjectSpace));   // the record "fixed" (no rule refuses): it moves on; nothing stays due
+        Assert.Equal("ordered", Instance(bad).StateKey);
+    }
+
+    [Fact] public void Timer_failure_that_is_not_a_refusal_still_fails_the_tick()
+    {
+        var (bad, _, good) = TwoDueInstances(2018);
+        IObjectSpace Failing() => db.NewObjectSpace().Refuse(BreaksRule, () => new InvalidOperationException("host broke"));
+
+        var ex = Assert.IsType<AggregateException>(Record.Exception(() => rt.RunDueTimers(Failing)));
+
+        Assert.Equal("host broke", Assert.Single(ex.InnerExceptions).Message);
+        Assert.Equal(("ordered", "wait-cooling"), (Instance(good).StateKey, Instance(bad).StateKey));
+        Assert.Equal(1, rt.RunDueTimers(db.NewObjectSpace));   // nothing stays due for other tests
+    }
+
+    [Fact] public void Timer_tick_with_a_failure_and_a_refusal_fails_with_the_failure_only_and_warns_the_refusal()
+    {
+        var (bad, _, good) = TwoDueInstances(2017);
+        var goodInst = Instance(good).ID;
+        var log = new ListLogger();
+        var logged = new WorkflowRuntime(new DefinitionStore(), clock, actions, log);
+        IObjectSpace Mixed() => db.NewObjectSpace()
+            .Refuse(BreaksRule, () => new InvalidOperationException("host broke"))
+            .Refuse(o => o is PurchaseRequest p && p.ID == good);
+
+        var ex = Assert.IsType<AggregateException>(Record.Exception(() => logged.RunDueTimers(Mixed)));
+
+        Assert.Equal("host broke", Assert.Single(ex.InnerExceptions).Message);   // the refusal is not among the failures
+        Assert.Contains(goodInst.ToString(), Assert.Single(log.Entries).Message);
+        Assert.Equal(("wait-cooling", "wait-cooling"), (Instance(good).StateKey, Instance(bad).StateKey));
+        Assert.Equal(2, rt.RunDueTimers(db.NewObjectSpace));   // nothing stays due for other tests
+    }
+
+    [Fact] public void Fire_refused_by_save_validation_throws_to_the_caller_and_commits_nothing()
+    {
+        // Unchanged on purpose: WorkflowCommand.Run lets it reach XAF, which shows an IUserFriendlyException as a message.
+        var (id, _) = Started(10, submit: false, title: Invalid + Guid.NewGuid().ToString("N"));
+        var caller = db.Caller("alice", "Approvers") with { NewCommandSpace = () => db.NewObjectSpace().Refuse(BreaksRule) };
+
+        var ex = Assert.IsType<DevExpress.Persistent.Validation.ValidationException>(
+            Record.Exception(() => rt.Fire(caller, typeof(PurchaseRequest), id, "Submit")));
+
+        Assert.Equal(RefusingSaves.Message, ex.Message);
+        Assert.Equal("draft", Instance(id).StateKey);
     }
 
     [Fact] public void Fire_without_role_is_refused()
