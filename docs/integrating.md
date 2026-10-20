@@ -205,9 +205,11 @@ PermissionPolicyRole GrantRole(string name, Action<PermissionPolicyRole> grant) 
   rather than rewriting its criteria. (The `Workflow` link stays protected by
   the `StateLockGuard` whatever the permission says.)
 - It never revokes. Removing a subject from the arguments, or deleting a seeded row, does not take the access away; the
-  next run recreates a deleted row. Revoke in the role itself.
+  next run recreates a deleted row. Revoke in the role itself. The one exception is a scoped subject (below): a scope
+  narrows, so it replaces the wider rows the grant once wrote.
 - Roles seeded before this change carry one combined instance permission (`SubjectType In (...)`). The next run adds one
-  row per subject type next to it; both grant the same access, so the old row can stay or be deleted.
+  row per subject type next to it; both grant the same access, so the old row can stay or be deleted. A scoped grant
+  takes its type out of that row.
 
 - **`GrantDesigner(role)`** grants:
   - full CRUD on definitions, states, transitions and effects;
@@ -225,6 +227,39 @@ PermissionPolicyRole GrantRole(string name, Action<PermissionPolicyRole> grant) 
     navigation group (`Application/NavigationItems/Items/Default/Items/<id>`). An id containing `/` is used as the full
     item path.
   - Name the role **before** the call. It throws `ArgumentException` for an unnamed role.
+- **Scoping a participant by the subject.** When the subject itself is readable only in part (records scoped by
+  membership, say), scope the role's runtime rows the same way. Pass `ParticipantSubject` instead of the tuple, with a
+  criteria on the subject's members:
+
+  ```csharp
+  WorkflowPermissions.GrantParticipant(r, new ParticipantSubject(typeof(Project), "Project_ListView",
+      "[Members][[ID] = CurrentUserId()]"));
+  ```
+
+  The role then reads only the instances, tasks and notifications whose subject matches. The rows join to the subject
+  through the instance's `SubjectId` (a free join; `T` is the subject's full type name):
+
+  | Row | Without a scope | With scope S |
+  | --- | --- | --- |
+  | Task, notification to the role | `[Role] = 'r'` | `[Role] = 'r' And [Instance.SubjectType] = 'T' And [<T>][[ID] = [^.Instance.SubjectId] And S]` |
+  | Notification to the requester | `[UserId] = CurrentUserId()` | the same with `[UserId] = CurrentUserId()` in front |
+  | Instance | `[SubjectType] = 'T'` | `[SubjectType] = 'T' And [<T>][[ID] = [^.SubjectId] And S]` |
+
+  - Once a role has a scoped subject, its task and notification rows are per type: an unscoped subject of the same role
+    gets `[Role] = 'r' And [Instance.SubjectType] = 'T'`, and later calls keep it that way.
+  - The scope reads the subject's own members. It may not use `^.`, and it must parse; either throws `ArgumentException`
+    before anything is written, as does one type passed with two different scopes.
+  - A scoped grant removes the wider rows the grant methods wrote: the role-wide rows, the plain rows of the scoped type,
+    and joined rows with another scope. A row an admin edited (another state set) keeps its other states but loses its
+    Read Allow. A row with a Deny stays. Rows with any other criteria are never touched: narrow those yourself. The types
+    a removed role-wide row served keep plain per-type rows.
+  - Passing a type unscoped after it was scoped adds its plain rows again: the last call wins.
+  - Scope the subject's own read permission with the same criteria. Deciding a task is authorized by reading its
+    subject, so a user outside the scope cannot decide its tasks.
+  - Hosts that seed their own participant roles can call the row halves alone: `GrantRoleRows(role, params (Type, string?
+    scope)[])` (tasks and notifications to the role, instances) and `GrantRequesterRows(role, ...)` (notifications to the
+    requester). `GrantRequesterRows` cannot tell which types a requester-only role served before, so pass every type whose
+    requester notifications stay readable, unscoped ones with a null scope.
 - **The designer actions check role names.** New version, Validate, Publish and Dry run show only to users holding a
   role named `Administrators` or `WorkflowDesigners`. Use exactly those names.
 - **The designer validates as it edits.** The definition view validates what is on screen, saved or not, on every

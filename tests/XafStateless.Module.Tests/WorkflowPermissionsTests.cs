@@ -130,6 +130,195 @@ public class WorkflowPermissionsTests(TestDb db) : IClassFixture<TestDb>
         Assert.Equal(afterFirst, Rows(id));
     }
 
+    // ---- CARD-2144: participant rows scoped by a criteria on the subject ----
+
+    static readonly string Pr = typeof(PurchaseRequest).FullName!, Au = typeof(ApplicationUser).FullName!;
+    const string Scope = "[Amount] > 100", Scope2 = "[Amount] > 200";
+    const string Requester = "[UserId] = CurrentUserId()";
+
+    static ParticipantSubject Scoped(Type t, string? scope) => new(t, t.Name + "_ListView", scope);
+
+    static string RoleRow(string role, string type, string? scope = null) =>
+        $"[Role] = '{role}' And [Instance.SubjectType] = '{type}'" + (scope == null ? "" : $" And [<{type}>][[ID] = [^.Instance.SubjectId] And {scope}]");
+    static string RequesterRow(string type, string? scope = null) =>
+        $"{Requester} And [Instance.SubjectType] = '{type}'" + (scope == null ? "" : $" And [<{type}>][[ID] = [^.Instance.SubjectId] And {scope}]");
+    static string InstanceRow(string type, string? scope = null) =>
+        $"[SubjectType] = '{type}'" + (scope == null ? "" : $" And [<{type}>][[ID] = [^.SubjectId] And {scope}]");
+
+    /// <summary>The object permission rows of <paramref name="target"/>, as "criteria r{Read} w{Write} d{Delete}".</summary>
+    List<string> Objects(Guid id, string target) =>
+        Rows(id).Where(r => r.StartsWith($"O {target} ", StringComparison.Ordinal)).Select(r => r[($"O {target} ").Length..]).ToList();
+
+    static string Allowed(string criteria) => $"{criteria} rAllow w d";
+
+    [Fact] public void A_scoped_grant_writes_joined_rows_and_no_wider_ones()
+    {
+        var name = $"sc-{Guid.NewGuid():N}";
+        var id = Role(name, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
+        Assert.Equal([Allowed(RoleRow(name, Pr, Scope))], Objects(id, nameof(WorkflowTask)));
+        Assert.Equal(new[] { Allowed(RequesterRow(Pr, Scope)), Allowed(RoleRow(name, Pr, Scope)) }.Order(StringComparer.Ordinal),
+            Objects(id, nameof(WorkflowNotification)));
+        Assert.Equal([Allowed(InstanceRow(Pr, Scope))], Objects(id, nameof(WorkflowInstance)));
+        var first = Rows(id);
+        Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
+        Assert.Equal(first, Rows(id));
+    }
+
+    [Fact] public void An_empty_scope_is_the_unscoped_grant()
+    {
+        var name = $"empty-{Guid.NewGuid():N}";
+        var a = Role(name, r => WorkflowPermissions.GrantParticipant(r, Subject(typeof(PurchaseRequest))));
+        var b = Role($"x-{Guid.NewGuid():N}", r => { r.Name = name; WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), "  ")); });
+        Assert.Equal(Rows(a), Rows(b));
+    }
+
+    [Fact] public void Unscoped_then_scoped_removes_the_wider_rows()
+    {
+        var name = $"narrow-{Guid.NewGuid():N}";
+        var id = Role(name, r => WorkflowPermissions.GrantParticipant(r, Subject(typeof(PurchaseRequest))));
+        Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
+        Assert.Equal([Allowed(RoleRow(name, Pr, Scope))], Objects(id, nameof(WorkflowTask)));
+        Assert.Equal(new[] { Allowed(RequesterRow(Pr, Scope)), Allowed(RoleRow(name, Pr, Scope)) }.Order(StringComparer.Ordinal),
+            Objects(id, nameof(WorkflowNotification)));
+        Assert.Equal([Allowed(InstanceRow(Pr, Scope))], Objects(id, nameof(WorkflowInstance)));
+    }
+
+    [Fact] public void Narrowing_one_type_keeps_the_other_types_the_role_wide_rows_served()
+    {
+        var name = $"served-{Guid.NewGuid():N}";
+        var id = Role(name, r => WorkflowPermissions.GrantParticipant(r, Subject(typeof(PurchaseRequest)), Subject(typeof(ApplicationUser))));
+        Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
+        Assert.Equal(new[] { Allowed(RoleRow(name, Au)), Allowed(RoleRow(name, Pr, Scope)) }.Order(StringComparer.Ordinal), Objects(id, nameof(WorkflowTask)));
+        Assert.Contains(Allowed(RequesterRow(Au)), Objects(id, nameof(WorkflowNotification)));
+        Assert.Contains(Allowed(RoleRow(name, Au)), Objects(id, nameof(WorkflowNotification)));
+        Assert.Contains(Allowed(InstanceRow(Au)), Objects(id, nameof(WorkflowInstance)));
+    }
+
+    [Fact] public void A_changed_scope_replaces_the_old_joined_rows()
+    {
+        var name = $"rescope-{Guid.NewGuid():N}";
+        var id = Role(name, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
+        Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope2)));
+        Assert.DoesNotContain(Rows(id), row => row.Contains(Scope, StringComparison.Ordinal));
+        Assert.Equal([Allowed(RoleRow(name, Pr, Scope2))], Objects(id, nameof(WorkflowTask)));
+        Assert.Equal([Allowed(InstanceRow(Pr, Scope2))], Objects(id, nameof(WorkflowInstance)));
+    }
+
+    [Fact] public void A_legacy_combined_instance_row_loses_the_scoped_type()
+    {
+        foreach (var (types, expected) in new (string[], string?)[] { ([Pr, Au], new InOperator(nameof(WorkflowInstance.SubjectType), [Au]).ToString()), ([Pr], null) })
+        {
+            var legacy = new InOperator(nameof(WorkflowInstance.SubjectType), types).ToString();
+            var id = Role($"legacy-{Guid.NewGuid():N}", r => r.AddObjectPermission<WorkflowInstance>(SecurityOperations.Read, legacy, SecurityPermissionState.Allow));
+            Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
+            var rows = Objects(id, nameof(WorkflowInstance));
+            Assert.DoesNotContain(rows, row => row.StartsWith(legacy + " ", StringComparison.Ordinal));
+            Assert.Contains(Allowed(InstanceRow(Pr, Scope)), rows);
+            Assert.Equal(expected == null ? 1 : 2, rows.Count);
+            if (expected != null) Assert.Contains(Allowed(expected), rows);
+        }
+    }
+
+    [Fact] public void Admin_edits_survive_narrowing_but_an_edited_wider_row_loses_its_read()
+    {
+        var name = $"admin-{Guid.NewGuid():N}";
+        var ownRole = new BinaryOperator(nameof(WorkflowTask.Role), name).ToString();
+        var id = Role(name, r =>
+        {
+            WorkflowPermissions.GrantParticipant(r, Subject(typeof(PurchaseRequest)));
+            r.AddObjectPermission<WorkflowInstance>(SecurityOperations.Read, InstanceRow(Pr, Scope), SecurityPermissionState.Deny);
+        });
+        Regrant(id, r =>
+        {
+            var notes = r.TypePermissions.Single(t => t.TargetType == typeof(WorkflowNotification)).ObjectPermissions;
+            notes.Single(o => o.Criteria == ownRole).ReadState = SecurityPermissionState.Deny;       // admin: Deny on a wider row
+            r.TypePermissions.Single(t => t.TargetType == typeof(WorkflowTask)).ObjectPermissions
+                .Single(o => o.Criteria == ownRole).WriteState = SecurityPermissionState.Allow;      // admin: another state set
+            notes.Single(o => o.Criteria == Requester).NavigateState = SecurityPermissionState.Allow;  // admin: Navigate only
+        });
+        Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
+        Assert.Contains($"{ownRole} rDeny w d", Objects(id, nameof(WorkflowNotification)));
+        Assert.Contains($"{ownRole} r wAllow d", Objects(id, nameof(WorkflowTask)));
+        using (var os = db.NewObjectSpace())
+        {
+            var requester = os.GetObjectByKey<PermissionPolicyRole>(id).TypePermissions.Single(t => t.TargetType == typeof(WorkflowNotification))
+                .ObjectPermissions.Single(o => o.Criteria == Requester);
+            Assert.Equal((null, SecurityPermissionState.Allow), (requester.ReadState, requester.NavigateState));
+        }
+        Assert.Equal([$"{InstanceRow(Pr, Scope)} rDeny w d"], Objects(id, nameof(WorkflowInstance)));
+    }
+
+    [Fact] public void A_later_unscoped_call_for_another_type_does_not_bring_the_role_wide_rows_back()
+    {
+        var name = $"guard-{Guid.NewGuid():N}";
+        var id = Role(name, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
+        Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Subject(typeof(ApplicationUser))));
+        var ownRole = new BinaryOperator(nameof(WorkflowTask.Role), name).ToString();
+        Assert.Equal(new[] { Allowed(RoleRow(name, Au)), Allowed(RoleRow(name, Pr, Scope)) }.Order(StringComparer.Ordinal), Objects(id, nameof(WorkflowTask)));
+        Assert.DoesNotContain(Objects(id, nameof(WorkflowNotification)), row => row.StartsWith(ownRole + " r", StringComparison.Ordinal) || row.StartsWith(Requester + " r", StringComparison.Ordinal));
+        Assert.Contains(Allowed(RequesterRow(Au)), Objects(id, nameof(WorkflowNotification)));
+    }
+
+    [Fact] public void Unscoped_after_scoped_for_the_same_type_adds_the_plain_rows()
+    {
+        var name = $"widen-{Guid.NewGuid():N}";
+        var id = Role(name, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
+        Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Subject(typeof(PurchaseRequest))));
+        Assert.Equal(new[] { Allowed(RoleRow(name, Pr)), Allowed(RoleRow(name, Pr, Scope)) }.Order(StringComparer.Ordinal), Objects(id, nameof(WorkflowTask)));
+        Assert.Equal(new[] { Allowed(InstanceRow(Pr)), Allowed(InstanceRow(Pr, Scope)) }.Order(StringComparer.Ordinal), Objects(id, nameof(WorkflowInstance)));
+    }
+
+    [Fact] public void An_invalid_scope_throws_before_anything_is_written()
+    {
+        var id = Role($"bad-{Guid.NewGuid():N}", r => WorkflowPermissions.GrantParticipant(r, Subject(typeof(PurchaseRequest))));
+        var before = Rows(id);
+        foreach (var subjects in new ParticipantSubject[][]
+                 {
+                     [Scoped(typeof(PurchaseRequest), "[Amount] >")],                                     // unparsable
+                     [Scoped(typeof(PurchaseRequest), "[^.Role] = 'x'")],                                 // parent at the top
+                     [Scoped(typeof(PurchaseRequest), $"[<{Au}>][[UserName] = ^.Title]")],                // parent inside a join
+                     [Scoped(typeof(PurchaseRequest), Scope), Scoped(typeof(PurchaseRequest), Scope2)],  // one type, two scopes
+                 })
+        {
+            Assert.Throws<ArgumentException>(() => Regrant(id, r => WorkflowPermissions.GrantParticipant(r, subjects[0], subjects[1..])));
+            Assert.Equal(before, Rows(id));
+        }
+        Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), "[Title] <> '^.x'"),   // a literal, not a path
+            Scoped(typeof(PurchaseRequest), "[Title]  <>  '^.x'")));                                                       // the same scope twice
+    }
+
+    [Fact] public void A_participant_grant_without_subjects_still_compiles_and_writes_the_role_wide_rows()
+    {
+        var name = $"none-{Guid.NewGuid():N}";
+        var id = Role(name, r => WorkflowPermissions.GrantParticipant(r));
+        Assert.Equal([Allowed(new BinaryOperator(nameof(WorkflowTask.Role), name).ToString())], Objects(id, nameof(WorkflowTask)));
+        Assert.Empty(Objects(id, nameof(WorkflowInstance)));
+    }
+
+    [Fact] public void The_row_methods_write_only_runtime_rows()
+    {
+        var name = $"rows-{Guid.NewGuid():N}";
+        var id = Role(name, r =>
+        {
+            WorkflowPermissions.GrantRoleRows(r, (typeof(PurchaseRequest), Scope));
+            WorkflowPermissions.GrantRequesterRows(r, (typeof(PurchaseRequest), Scope));
+        });
+        var rows = Rows(id);
+        Assert.DoesNotContain(rows, row => row.StartsWith("N ", StringComparison.Ordinal) || row.StartsWith("M ", StringComparison.Ordinal));
+        Assert.DoesNotContain(rows, row => row.StartsWith("T PurchaseRequest", StringComparison.Ordinal) || row.StartsWith("T WorkflowDefinition", StringComparison.Ordinal));
+        Assert.Equal([Allowed(RoleRow(name, Pr, Scope))], Objects(id, nameof(WorkflowTask)));
+        Assert.Equal([Allowed(InstanceRow(Pr, Scope))], Objects(id, nameof(WorkflowInstance)));
+    }
+
+    [Fact] public void A_requester_only_role_narrows_to_the_types_passed()
+    {
+        var id = Role($"req-{Guid.NewGuid():N}", r => WorkflowPermissions.GrantRequesterRows(r));
+        Assert.Equal([Allowed(Requester)], Objects(id, nameof(WorkflowNotification)));
+        Regrant(id, r => WorkflowPermissions.GrantRequesterRows(r, (typeof(PurchaseRequest), Scope), (typeof(ApplicationUser), null)));
+        Assert.Equal(new[] { Allowed(RequesterRow(Au)), Allowed(RequesterRow(Pr, Scope)) }.Order(StringComparer.Ordinal), Objects(id, nameof(WorkflowNotification)));
+        Assert.DoesNotContain(Rows(id), row => row.StartsWith("O WorkflowInstance", StringComparison.Ordinal) || row.StartsWith("O WorkflowTask", StringComparison.Ordinal));
+    }
+
     [Fact] public void Designer_and_participant_roles_cover_rule_set_entities()
     {
         var designerId = Role($"des-{Guid.NewGuid():N}", WorkflowPermissions.GrantDesigner);
