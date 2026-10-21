@@ -1,4 +1,23 @@
-# Session handoff — 2026-10-21
+# Session handoff — 2026-10-22
+
+## This session (2026-10-21/22): scoped participant rows, release 0.3.0
+
+- `8177ad8`: a host can scope a participant role's runtime rows by a criteria on the subject
+  (`GrantParticipant(role, ParticipantSubject, ...)`, `GrantRoleRows`, `GrantRequesterRows`). A scope of `"False"`
+  hides every row from a role that cannot read the subject.
+- `45f7273`: **0.3.0 published** to the private feed (Engine, Module, Blazor). It includes XSM-035 (rule sets, three new
+  entities = a schema change for every host) and WF-010. New Engine deps: FastExpressionCompiler 5.0.2,
+  FluentValidation 11.11.0, System.Linq.Dynamic.Core 1.6.2. The vulnerability warnings on restore (MessagePack,
+  System.Security.Cryptography.Pkcs/Xml) come through DevExpress 26.1.4 and were already there in 0.2.1.
+- `1424f34`: tests only, in `ScopedParticipantTests`. The first checks that a `"False"` scope hides every row. The second
+  covers the grant set for a role that can write the subject but isn't named in the workflow: it reads the definition
+  and its scoped instances, it can Start and Fire, and `StateLockGuard` refuses any change to the workflow link outside
+  the runtime.
+- E2E needs a freshly seeded catalog (`XafStatelessE2E`, see README): the demo DB `XafStatelessDemo` was stale and made
+  `Designer_adds_a_finance_step...` time out.
+- Tests: Engine 58, Module 175, E2E 5/5.
+
+# Previous session — 2026-10-21
 
 ## This session (2026-10-21): WF-010, a commit refused by the host's save validation
 
