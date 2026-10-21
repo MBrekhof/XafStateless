@@ -138,7 +138,7 @@ public class ScopedParticipantTests(TestDb db) : IClassFixture<TestDb>
             Assert.Equal(visible, os.GetObjectByKey<WorkflowNotification>(ids.RoleNote) != null);
             Assert.Equal(visible, os.GetObjectByKey<WorkflowNotification>(ids.RequesterNote) != null);
             Assert.Equal(visible, os.GetObjectByKey<WorkflowInstance>(ids.Instance) != null);
-            Assert.Equal(visible, os.GetObjectByKey<PurchaseRequest>(subject).Workflow != null);
+            Assert.Equal(visible, os.GetObjectByKey<PurchaseRequest>(subject)?.Workflow != null);   // null: the subject is unreadable
         }
     }
 
@@ -240,6 +240,57 @@ public class ScopedParticipantTests(TestDb db) : IClassFixture<TestDb>
         Assert.All(moved, n => Assert.Null(secured.GetObjectByKey<WorkflowNotification>(n)));
         Assert.All(kept, n => Assert.NotNull(secured.GetObjectByKey<WorkflowNotification>(n)));
         Assert.Equal(2, secured.GetObjectsQuery<WorkflowNotification>().Count(n => n.UserId == id));
+    }
+
+    [Fact] public void A_False_scope_hides_every_row_from_a_role_that_cannot_read_the_subject()
+    {
+        // CARD-2284: a host grants a notified role its workflow rows without Read on the subject (BPG). A notification's text
+        // carries the subject's fields, so such a role's rows are scoped to nothing; unscoped, it read them.
+        var role = $"Notified-{Guid.NewGuid():N}";
+        var user = $"u-{Guid.NewGuid():N}";
+        var w = Build(role, r =>
+        {
+            foreach (var t in new[] { typeof(WorkflowDefinition), typeof(WorkflowState), typeof(WorkflowTransition), typeof(WorkflowEffect) })
+                r.EnsureTypePermission(t).ReadState = SecurityPermissionState.Allow;
+            WorkflowPermissions.GrantRoleRows(r, (typeof(PurchaseRequest), "False"));
+        }, () => User(user, role));
+        using (var provider = LogOn(user, out _))
+        using (var os = provider.CreateObjectSpace())
+            Assert.Null(os.GetObjectByKey<PurchaseRequest>(w.Large));   // nothing on the subject
+        AssertReads(user, w.Large, visible: false);
+        AssertReads(user, w.Small, visible: false);
+    }
+
+    [Fact] public void A_writer_reads_the_definition_and_its_scoped_instances_but_cannot_change_the_link()
+    {
+        // CARD-2308: what a host (BPG) grants a role with Write on the subject that no workflow names. Start lists the published
+        // definitions, Transition and the state locks need subject.Workflow.Definition; the link stays the runtime's.
+        var role = $"Writer-{Guid.NewGuid():N}";
+        var user = $"u-{Guid.NewGuid():N}";
+        var id = Guid.Empty;
+        var w = Build(role, r =>
+        {
+            r.AddObjectPermission<PurchaseRequest>(SecurityOperations.Read + ";" + SecurityOperations.Write, Amount, SecurityPermissionState.Allow);
+            r.EnsureTypePermission(typeof(WorkflowDefinition)).ReadState = SecurityPermissionState.Allow;
+            WorkflowPermissions.GrantRoleRows(r, (typeof(PurchaseRequest), Amount));
+            var link = r.EnsureTypePermission(typeof(PurchaseRequest)).CreateMemberPermission();
+            (link.Members, link.WriteState) = (nameof(IWorkflowSubject.Workflow), SecurityPermissionState.Deny);
+        }, () => id = User(user, role));
+        var fresh = Request("fresh", 500);
+        using var provider = LogOn(user, out var security);
+        using var os = provider.CreateObjectSpace();
+        Assert.Contains(w.Definition, os.GetObjectsQuery<WorkflowDefinition>().Where(d => d.State == DefinitionState.Published).Select(d => d.Name).ToList());
+        var c = new WorkflowCaller(user, role.Equals, os, db.NewObjectSpace, security, id);
+        Assert.True(Runtime().Start(c, typeof(PurchaseRequest), fresh, w.Definition).Ok);   // as the user, through security
+        Assert.Contains(Runtime().Available(c, typeof(PurchaseRequest), fresh), t => t.Trigger == "Submit");
+        var large = os.GetObjectByKey<PurchaseRequest>(w.Large);
+        Assert.NotNull(large.Workflow?.Definition);
+        Assert.Null(os.GetObjectByKey<PurchaseRequest>(w.Small));   // outside the scope
+        bool May(string member) => security.IsGranted(new PermissionRequest(os, typeof(PurchaseRequest), SecurityOperations.Write, large, member));
+        Assert.True(May(nameof(PurchaseRequest.Title)));
+        Assert.False(May(nameof(IWorkflowSubject.Workflow)));   // the editor is read-only; the guard below refuses the save anyway
+        large.Workflow = null;
+        Assert.Equal(StateLockGuard.LinkManaged, Assert.ThrowsAny<Exception>(() => os.CommitChanges()).Message);
     }
 
     [Fact] public void Decide_is_refused_when_the_subject_read_is_scoped_the_same_way()
