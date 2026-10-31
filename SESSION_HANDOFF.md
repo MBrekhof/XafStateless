@@ -1,4 +1,26 @@
-# Session handoff — 2026-10-22
+# Session handoff — 2026-11-01
+
+## This session (2026-10-31/11-01): user-member assignee and Notify (CARD-2615 (1)), locks before the start (CARD-2713)
+
+- `e1c816f` (branch `card-2615-2713`, fast-forwarded into master): a Task state's role or a Notify recipient can be a
+  user member of the subject, `@Buyer` (a reference to a Guid-keyed `ISecurityUser`). The task gets
+  `WorkflowTask.UserId/UserName` (**schema change**: two columns and a `(UserId, State)` index) and only that user
+  decides it; an empty or inactive member refuses entering the task (Martin); the task keeps its user when the member
+  changes (Martin). New `WorkflowPermissions.GrantAssigneeRows` (GrantParticipant includes it). A subject without a
+  workflow link is locked as in the initial state of every Published definition for its type, in `StateLockGuard` and
+  `StateLockAppearanceController` (CARD-2713). Plan, both reviews and verification:
+  `docs/plans/2026-10-31-card-2615-2713-user-assignee-and-unstarted-locks.md`.
+- Reviews ran on Codex (gpt-6-luna): Gemini's quota was used up for the session.
+- **Not released.** 0.4.0 waits for Martin's go; BPG then bumps its reference and uses `@<member>` in
+  `SpecWorkflowChecks`/`WorkflowSeedEmitter` and calls `GrantAssigneeRows`.
+- The uncommitted DevExpress 26.1.6 bump in the main tree stays out of this work (Martin).
+- Tests: Engine 59, Module 196, E2E 5/5 (fresh `XafStatelessE2E`), browser smoke of both features.
+- Demo launch traps (README fixed): the E2E connection-string argument must come **first** (after
+  `--updateDatabase --forceUpdate --silent` it is swallowed as `--silent`'s value and the seed updates
+  `XafStatelessDemo`, which happened twice this session: it got this branch's nullable columns); the exe run from
+  `bin` needs `--environment Development` or the packages' static files 404 and the login page never renders.
+
+# Previous session — 2026-10-22
 
 ## This session (2026-10-21/22): scoped participant rows, release 0.3.0
 

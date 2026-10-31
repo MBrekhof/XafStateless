@@ -139,9 +139,11 @@ powershell -File tests\XafStateless.E2E\bin\Debug\net10.0\playwright.ps1 install
 dotnet test tests\XafStateless.E2E
 ```
 
-To keep your own `XafStatelessDemo` data, give the E2E run its own catalog: add
+To keep your own `XafStatelessDemo` data, give the E2E run its own catalog: put
 `"--ConnectionStrings:ConnectionString=Data Source=(localdb)\mssqllocaldb;Integrated Security=SSPI;MultipleActiveResultSets=True;Initial Catalog=XafStatelessE2E"`
-to both demo exe lines (seed and run), and drop `XafStatelessE2E` instead before each run.
+**first** on both demo exe lines (seed and run), and drop `XafStatelessE2E` instead before each run. After the switches
+`--updateDatabase --forceUpdate --silent` it is read as the value of `--silent` and ignored, and the seed updates
+`XafStatelessDemo`.
 
 The E2E test is not part of the solution, so `dotnet test XafStateless.slnx` runs without the demo. It writes a
 screenshot per step to `tests/XafStateless.E2E/screenshots/` (gitignored). The base URL and user names are in
