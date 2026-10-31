@@ -71,11 +71,26 @@ public sealed class StateLockAppearanceController : ViewController<DetailView>
     }
 
     /// <summary>From the pinned definition's snapshot: every member any state locks, and those the current state locks.</summary>
-    (IReadOnlyList<string> Lockable, IReadOnlyList<string> Locked) Locks()
+    (IReadOnlyList<string> Lockable, IReadOnlyList<string> Locked) Locks() =>
+        store == null ? ([], []) : Locks(store, View.ObjectSpace, View.CurrentObject);
+
+    /// <remarks>A subject without a workflow is locked as in the initial state of every Published definition for its type
+    /// (CARD-2713, as <see cref="StateLockGuard"/>). A user who can read the subject but not its instance sees the link as null,
+    /// so gets those initial locks; the guard judges the persisted link.</remarks>
+    internal static (IReadOnlyList<string> Lockable, IReadOnlyList<string> Locked) Locks(DefinitionStore store, IObjectSpace os, object? current)
     {
-        if (View.CurrentObject is not IWorkflowSubject { Workflow: { Definition: { } d } instance } || store == null) return ([], []);
-        var states = store.Get(View.ObjectSpace, d.ID).States;
-        return (states.SelectMany(s => s.LockedMembers).Distinct().ToList(),
-                states.FirstOrDefault(s => s.Key == instance.StateKey)?.LockedMembers ?? []);
+        switch (current)
+        {
+            case IWorkflowSubject { Workflow: { Definition: { } d } instance }:
+                var states = store.Get(os, d.ID).States;
+                return (states.SelectMany(s => s.LockedMembers).Distinct().ToList(),
+                        states.FirstOrDefault(s => s.Key == instance.StateKey)?.LockedMembers ?? []);
+            case IWorkflowSubject { Workflow: null } subject:
+                var defs = store.PublishedFor(os, subject);
+                return (defs.SelectMany(def => def.States).SelectMany(s => s.LockedMembers).Distinct().ToList(),
+                        defs.SelectMany(def => def.State(def.InitialState).LockedMembers).Distinct().ToList());
+            default:
+                return ([], []);
+        }
     }
 }

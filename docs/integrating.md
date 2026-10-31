@@ -132,6 +132,12 @@ workflow or not.
     dispatcher's update, a delete) passes.
 - `StateLockGuard`:
   - refuses a save that changes a field locked in the subject's current state;
+  - treats a subject without a workflow (a new one, or one not started) as being in the **initial state** of every
+    Published definition for its class: the fields those initial states lock (all of them, when a class has several
+    definitions) cannot be set before the workflow starts: "'Stage' is locked until its workflow starts". A new subject
+    may keep the value a new object of its class starts with (property initializers and `OnCreated` defaults); an
+    existing one may not change it. A field locked only in a later state stays editable until then. Draft and Retired
+    definitions lock nothing;
   - refuses any change to the subject's `Workflow` link;
   - refuses deleting a subject (hard, or soft through `GCRecord`) while its workflow is in a non-Final state, for every
     role, Administrators too: "'Chair' cannot be deleted while its workflow is in 'Approval'". A subject whose workflow
@@ -218,8 +224,8 @@ PermissionPolicyRole GrantRole(string name, Action<PermissionPolicyRole> grant) 
 - **`GrantParticipant(role, params (Type subjectType, string navigationItemId)[] subjects)`** grants:
   - CRUD on each subject class, except writing its `Workflow` link;
   - read on the definition types;
-  - read on tasks and notifications addressed to this role, on notifications addressed to the logged-on user (see
-    "The requester" in step 9), and on instances of the granted subject types;
+  - read on tasks and notifications addressed to this role, on tasks and notifications addressed to the logged-on user
+    (see "The requester" and "A user member" in step 9), and on instances of the granted subject types;
   - navigation to Workflow Task, Workflow Notification and each subject.
 
   About the arguments:
@@ -242,7 +248,7 @@ PermissionPolicyRole GrantRole(string name, Action<PermissionPolicyRole> grant) 
   | Row | Without a scope | With scope S |
   | --- | --- | --- |
   | Task, notification to the role | `[Role] = 'r'` | `[Role] = 'r' And [Instance.SubjectType] = 'T' And [<T>][[ID] = [^.Instance.SubjectId] And S]` |
-  | Notification to the requester | `[UserId] = CurrentUserId()` | the same with `[UserId] = CurrentUserId()` in front |
+  | Notification to the requester or a user, task assigned to a user | `[UserId] = CurrentUserId()` | the same with `[UserId] = CurrentUserId()` in front |
   | Instance | `[SubjectType] = 'T'` | `[SubjectType] = 'T' And [<T>][[ID] = [^.SubjectId] And S]` |
 
   - Once a role has a scoped subject, its task and notification rows are per type: an unscoped subject of the same role
@@ -258,8 +264,10 @@ PermissionPolicyRole GrantRole(string name, Action<PermissionPolicyRole> grant) 
     subject, so a user outside the scope cannot decide its tasks.
   - Hosts that seed their own participant roles can call the row halves alone: `GrantRoleRows(role, params (Type, string?
     scope)[])` (tasks and notifications to the role, instances) and `GrantRequesterRows(role, ...)` (notifications to the
-    requester). `GrantRequesterRows` cannot tell which types a requester-only role served before, so pass every type whose
-    requester notifications stay readable, unscoped ones with a null scope.
+    requester, or to a user member). `GrantRequesterRows` cannot tell which types a requester-only role served before, so pass every type whose
+    requester notifications stay readable, unscoped ones with a null scope. `GrantAssigneeRows(role, ...)` adds read on
+    the tasks assigned to the logged-on user through a user member (step 9), with the same arguments and the same rule:
+    give it to every role whose users can be assigned, with every subject type they can be assigned on.
 - **The designer actions check role names.** New version, Validate, Publish and Dry run show only to users holding a
   role named `Administrators` or `WorkflowDesigners`. Use exactly those names.
 - **The designer validates as it edits.** The definition view validates what is on screen, saved or not, on every
@@ -272,7 +280,8 @@ PermissionPolicyRole GrantRole(string name, Action<PermissionPolicyRole> grant) 
   one of its manual transitions, even one without a required role: the runtime checks Write on the subject through the
   caller's security strategy (`IsGrantedExtensions.CanWrite`) and refuses with "changing the workflow of this
   PurchaseRequest requires write access to it". A caller that cannot read the subject at all is refused as well. Deciding a
-  task is authorized by the task's role instead. The timer runs as the system and is not checked.
+  task is authorized by the task's role instead, or, for a task assigned to a user, by being that user (the caller's
+  `UserId`; administrators included, no role counts). The timer runs as the system and is not checked.
 - **Code that calls the runtime itself passes the security strategy.** The module's actions build their
   `WorkflowCaller` with `WorkflowCommand.Caller(app, objectSpace)`, which does this. A host that constructs a
   `WorkflowCaller` itself over a secured object space (a Web API endpoint, a job acting for a user) must pass the
@@ -283,8 +292,9 @@ PermissionPolicyRole GrantRole(string name, Action<PermissionPolicyRole> grant) 
 - **Role membership is read from the logged-on user** (`IPermissionPolicyUser.Roles`) and stays cached until the next
   logon, so a role granted or revoked meanwhile changes what the workflow actions allow only after the user logs on again.
 - **Role names in workflows are role names.** A Task state's role, a transition's required role and a Notify
-  recipient are all names of `PermissionPolicyRole` rows, except the Notify recipient `@requester` (step 9); a role
-  named `@requester` makes a definition that uses it fail validation. The lookups read them through a non-secured object space, so
+  recipient are all names of `PermissionPolicyRole` rows, except `@requester` (a Notify recipient) and `@Member` (a user
+  member, a Task state's role or a Notify recipient; step 9); a role named like one of them makes a definition that uses
+  it fail validation. The lookups read them through a non-secured object space, so
   users need no read permission on roles.
 - The demo also gives its workflow users the template's `Default` role, for My Details and the per-user model store.
   The workflow permissions do not need it.
@@ -320,7 +330,13 @@ public class PurchaseRequest : BaseObject, IWorkflowSubject
 - On a subject's detail view, the module adds the **Start workflow** action (Published definitions whose target type is
   this class) and the **Transition** action (the manual transitions the user may fire now). Both are hidden from a user
   without Write on the subject.
-- A subject cannot be deleted while its workflow is in a non-Final state (see the guards in step 3).
+- A subject cannot be deleted while its workflow is in a non-Final state (see the guards in step 3). Before its workflow
+  starts, the fields its definitions lock in their initial state are locked (step 3); the detail view disables their
+  editors too.
+- A **user member** is a public, persistent reference to the application's users: a Guid-keyed class implementing XAF's
+  `ISecurityUser` (`PermissionPolicyUser` and the template's `ApplicationUser` are), e.g.
+  `public virtual ApplicationUser? Buyer { get; set; }`. A Task state's role or a Notify recipient can address it as
+  `@Buyer` (step 9).
 - The members that effects (Set field, Increment) and field locks can use are the public, persistent, writable, browsable
   scalar members: string, number, bool, DateTime, Guid and enum. `ID`, `Workflow`, the lock field, references and
   collections are excluded. Increment counts on whole-number and decimal members only (null counts as 0; the step is the
@@ -378,7 +394,8 @@ host), where Hangfire's activator already gives each job run its own scope.
 A Notify effect writes a `WorkflowNotification` row (the outbox), in the same commit as the state change:
 - the recipient, exactly one of:
   - `Role`: a role name, for a Notify addressed to a role;
-  - `UserId` (with `UserName` as a display snapshot): a single user, for a Notify addressed to `@requester`;
+  - `UserId` (with `UserName` as a display snapshot): a single user, for a Notify addressed to `@requester` or to a
+    user member (`@Buyer`);
 - `Body`: the template with `{Member}` placeholders filled in. A placeholder reads any member of the subject, whatever the
   recipient role's member-level Read permissions: designers are trusted not to put hidden members into a notification;
 - `State` = `Pending`, plus `Attempts`, `LastError` and `CreatedUtc`.
@@ -390,6 +407,18 @@ The requester is fixed once the instance exists. A workflow started without a us
 has no requester: its requester notifications are skipped, and the result message says so. Participants read the
 notifications addressed to them in the Workflow Notification list (`[UserId] = CurrentUserId()`), next to their role's.
 Users must be Guid-keyed (XAF's `BaseObject` users are); another key type is refused at Start.
+
+**A user member.** The Target lookup of a Notify effect, and a Task state's role lookup, also offer the subject's user
+members as `@Member` (step 7). Each reads the user the member holds when the state is entered:
+- A Notify to `@Buyer` goes to that user (`UserId`, `UserName`). An empty member, or an inactive user, skips the
+  notification and the result message says so.
+- A Task state with role `@Buyer` opens a task assigned to that user: `WorkflowTask.UserId` and `UserName` are set and
+  `Role` is empty. Only that user decides it (by key; no role counts, administrators neither), and the Workflow Task list
+  shows it to them next to their roles' tasks. An empty member, or an inactive user, **refuses** the command that would
+  enter the state ("task 'review' is assigned to 'Buyer', which is empty or an inactive user: set it first"), and nothing
+  is committed; a timer into it is skipped with a warning and stays due. The task keeps its user: changing the member
+  while the task is open does not move it; the next task the workflow opens reads the new value. Users read their tasks
+  through `[UserId] = CurrentUserId()` (`GrantParticipant` adds it; `GrantAssigneeRows` on its own, step 6).
 
 A notification's recipient, `Body`, `Instance` and `CreatedUtc` are fixed once written; delivery may change `State`,
 `Attempts` and `LastError`.

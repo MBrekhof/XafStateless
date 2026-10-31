@@ -142,6 +142,9 @@ public class WorkflowPermissionsTests(TestDb db) : IClassFixture<TestDb>
         $"[Role] = '{role}' And [Instance.SubjectType] = '{type}'" + (scope == null ? "" : $" And [<{type}>][[ID] = [^.Instance.SubjectId] And {scope}]");
     static string RequesterRow(string type, string? scope = null) =>
         $"{Requester} And [Instance.SubjectType] = '{type}'" + (scope == null ? "" : $" And [<{type}>][[ID] = [^.Instance.SubjectId] And {scope}]");
+    /// <summary>A task row for the logged-on user's own tasks (CARD-2615): the requester row's text, on WorkflowTask.</summary>
+    static string AssigneeRow(string type, string? scope = null) => RequesterRow(type, scope);
+    static IEnumerable<string> Sorted(params string[] criteria) => criteria.Select(Allowed).Order(StringComparer.Ordinal);
     static string InstanceRow(string type, string? scope = null) =>
         $"[SubjectType] = '{type}'" + (scope == null ? "" : $" And [<{type}>][[ID] = [^.SubjectId] And {scope}]");
 
@@ -155,7 +158,7 @@ public class WorkflowPermissionsTests(TestDb db) : IClassFixture<TestDb>
     {
         var name = $"sc-{Guid.NewGuid():N}";
         var id = Role(name, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
-        Assert.Equal([Allowed(RoleRow(name, Pr, Scope))], Objects(id, nameof(WorkflowTask)));
+        Assert.Equal(Sorted(RoleRow(name, Pr, Scope), AssigneeRow(Pr, Scope)), Objects(id, nameof(WorkflowTask)));
         Assert.Equal(new[] { Allowed(RequesterRow(Pr, Scope)), Allowed(RoleRow(name, Pr, Scope)) }.Order(StringComparer.Ordinal),
             Objects(id, nameof(WorkflowNotification)));
         Assert.Equal([Allowed(InstanceRow(Pr, Scope))], Objects(id, nameof(WorkflowInstance)));
@@ -177,7 +180,7 @@ public class WorkflowPermissionsTests(TestDb db) : IClassFixture<TestDb>
         var name = $"narrow-{Guid.NewGuid():N}";
         var id = Role(name, r => WorkflowPermissions.GrantParticipant(r, Subject(typeof(PurchaseRequest))));
         Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
-        Assert.Equal([Allowed(RoleRow(name, Pr, Scope))], Objects(id, nameof(WorkflowTask)));
+        Assert.Equal(Sorted(RoleRow(name, Pr, Scope), AssigneeRow(Pr, Scope)), Objects(id, nameof(WorkflowTask)));
         Assert.Equal(new[] { Allowed(RequesterRow(Pr, Scope)), Allowed(RoleRow(name, Pr, Scope)) }.Order(StringComparer.Ordinal),
             Objects(id, nameof(WorkflowNotification)));
         Assert.Equal([Allowed(InstanceRow(Pr, Scope))], Objects(id, nameof(WorkflowInstance)));
@@ -188,7 +191,7 @@ public class WorkflowPermissionsTests(TestDb db) : IClassFixture<TestDb>
         var name = $"served-{Guid.NewGuid():N}";
         var id = Role(name, r => WorkflowPermissions.GrantParticipant(r, Subject(typeof(PurchaseRequest)), Subject(typeof(ApplicationUser))));
         Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
-        Assert.Equal(new[] { Allowed(RoleRow(name, Au)), Allowed(RoleRow(name, Pr, Scope)) }.Order(StringComparer.Ordinal), Objects(id, nameof(WorkflowTask)));
+        Assert.Equal(Sorted(RoleRow(name, Au), RoleRow(name, Pr, Scope), AssigneeRow(Au), AssigneeRow(Pr, Scope)), Objects(id, nameof(WorkflowTask)));
         Assert.Contains(Allowed(RequesterRow(Au)), Objects(id, nameof(WorkflowNotification)));
         Assert.Contains(Allowed(RoleRow(name, Au)), Objects(id, nameof(WorkflowNotification)));
         Assert.Contains(Allowed(InstanceRow(Au)), Objects(id, nameof(WorkflowInstance)));
@@ -200,7 +203,7 @@ public class WorkflowPermissionsTests(TestDb db) : IClassFixture<TestDb>
         var id = Role(name, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
         Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope2)));
         Assert.DoesNotContain(Rows(id), row => row.Contains(Scope, StringComparison.Ordinal));
-        Assert.Equal([Allowed(RoleRow(name, Pr, Scope2))], Objects(id, nameof(WorkflowTask)));
+        Assert.Equal(Sorted(RoleRow(name, Pr, Scope2), AssigneeRow(Pr, Scope2)), Objects(id, nameof(WorkflowTask)));
         Assert.Equal([Allowed(InstanceRow(Pr, Scope2))], Objects(id, nameof(WorkflowInstance)));
     }
 
@@ -254,7 +257,7 @@ public class WorkflowPermissionsTests(TestDb db) : IClassFixture<TestDb>
         var id = Role(name, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
         Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Subject(typeof(ApplicationUser))));
         var ownRole = new BinaryOperator(nameof(WorkflowTask.Role), name).ToString();
-        Assert.Equal(new[] { Allowed(RoleRow(name, Au)), Allowed(RoleRow(name, Pr, Scope)) }.Order(StringComparer.Ordinal), Objects(id, nameof(WorkflowTask)));
+        Assert.Equal(Sorted(RoleRow(name, Au), RoleRow(name, Pr, Scope), AssigneeRow(Au), AssigneeRow(Pr, Scope)), Objects(id, nameof(WorkflowTask)));
         Assert.DoesNotContain(Objects(id, nameof(WorkflowNotification)), row => row.StartsWith(ownRole + " r", StringComparison.Ordinal) || row.StartsWith(Requester + " r", StringComparison.Ordinal));
         Assert.Contains(Allowed(RequesterRow(Au)), Objects(id, nameof(WorkflowNotification)));
     }
@@ -264,7 +267,7 @@ public class WorkflowPermissionsTests(TestDb db) : IClassFixture<TestDb>
         var name = $"widen-{Guid.NewGuid():N}";
         var id = Role(name, r => WorkflowPermissions.GrantParticipant(r, Scoped(typeof(PurchaseRequest), Scope)));
         Regrant(id, r => WorkflowPermissions.GrantParticipant(r, Subject(typeof(PurchaseRequest))));
-        Assert.Equal(new[] { Allowed(RoleRow(name, Pr)), Allowed(RoleRow(name, Pr, Scope)) }.Order(StringComparer.Ordinal), Objects(id, nameof(WorkflowTask)));
+        Assert.Equal(Sorted(RoleRow(name, Pr), RoleRow(name, Pr, Scope), AssigneeRow(Pr), AssigneeRow(Pr, Scope)), Objects(id, nameof(WorkflowTask)));
         Assert.Equal(new[] { Allowed(InstanceRow(Pr)), Allowed(InstanceRow(Pr, Scope)) }.Order(StringComparer.Ordinal), Objects(id, nameof(WorkflowInstance)));
     }
 
@@ -291,7 +294,7 @@ public class WorkflowPermissionsTests(TestDb db) : IClassFixture<TestDb>
     {
         var name = $"none-{Guid.NewGuid():N}";
         var id = Role(name, r => WorkflowPermissions.GrantParticipant(r));
-        Assert.Equal([Allowed(new BinaryOperator(nameof(WorkflowTask.Role), name).ToString())], Objects(id, nameof(WorkflowTask)));
+        Assert.Equal(Sorted(new BinaryOperator(nameof(WorkflowTask.Role), name).ToString(), Requester), Objects(id, nameof(WorkflowTask)));
         Assert.Empty(Objects(id, nameof(WorkflowInstance)));
     }
 

@@ -17,6 +17,10 @@ namespace XafStateless.Module.Services;
 /// <item>A Modified <see cref="IWorkflowSubject"/> may not change a member locked in its instance's <b>persisted</b> state:
 /// the subject's Workflow link, the instance's StateKey and the state's locks are all read from the database at SavingChanges
 /// (<see cref="RawSql"/>: same connection and transaction, never rewritten by XAF security), never from tracked values.</item>
+/// <item>A subject without a persisted Workflow link (Added, or not started) is locked as if in the initial state of its
+/// workflow (CARD-2713): the members the initial states of the Published definitions for its type lock (union). A Modified
+/// one is judged against the database as above; an Added one against what a new object of its type starts with
+/// (<see cref="Baseline"/>).</item>
 /// <item>Inside a <see cref="RuntimeScope"/> bound to the saving context, only the (subject type, subject, member) entries the runtime recorded
 /// with <see cref="RuntimeScope.Allow"/> (one per SetField) are exempt; every other modified member is still checked.</item>
 /// <item>Outside a runtime scope the Workflow link cannot change, clearing included; it is checked first, so clearing it in
@@ -86,28 +90,54 @@ public sealed class StateLockGuard : SaveChangesInterceptor
         }
 
         var modified = subjects.Where(e => e.State == EntityState.Modified && persistedLink.GetValueOrDefault(Key(e)) != null).ToList();
-        if (modified.Count == 0) return;
+        // CARD-2713: no persisted link (new, or not started) = locked as in the initial state of its workflow.
+        var unstarted = subjects.Where(e => e.State == EntityState.Added || (persistedLink.TryGetValue(Key(e), out var l) && l == null)).ToList();
+        var candidates = new List<(EntityEntry Entry, string Member, string Refusal)>();   // modified locked members, judged below
 
-        // Persisted instance state, then that state's locks and caption (definitions are immutable once Published).
-        var instances = RawSql.Rows<WorkflowInstance>(ctx, Id, modified.Select(e => persistedLink[Key(e)]!.Value),
-                Id, defFk, nameof(WorkflowInstance.StateKey))
-            .ToDictionary(r => (Guid)r[0]!, r => (Definition: (Guid?)r[1], StateKey: (string)r[2]!));
-        var locks = RawSql.Rows<WorkflowState>(ctx, stateFk, instances.Values.Select(i => i.Definition).OfType<Guid>(),
-                stateFk, nameof(WorkflowState.Key), nameof(WorkflowState.Caption), nameof(WorkflowState.LockedMembers))
-            .ToDictionary(r => ((Guid)r[0]!, (string)r[1]!), r => (Caption: (string)r[2]!, Members: DefinitionMapper.Members((string?)r[3])));
-
-        // Each subject's locked, modified, non-exempt members. No live instance or state row means nothing is locked; instance
-        // deletes are refused outside the runtime (DefinitionGuard), so that happens only by writes that bypass EF.
-        var candidates = new List<(EntityEntry Entry, string Member, string Caption)>();
-        foreach (var e in modified)
+        if (modified.Count > 0)
         {
-            var (type, id) = Key(e);
-            if (!instances.TryGetValue(persistedLink[Key(e)]!.Value, out var instance) || instance.Definition is not { } def
-                || !locks.TryGetValue((def, instance.StateKey), out var state))
-                continue;
-            foreach (var member in state.Members)
-                if (e.Metadata.FindProperty(member) != null && e.Property(member).IsModified && scope?.IsAllowed(type, id, member) != true)
-                    candidates.Add((e, member, state.Caption));
+            // Persisted instance state, then that state's locks and caption (definitions are immutable once Published).
+            var instances = RawSql.Rows<WorkflowInstance>(ctx, Id, modified.Select(e => persistedLink[Key(e)]!.Value),
+                    Id, defFk, nameof(WorkflowInstance.StateKey))
+                .ToDictionary(r => (Guid)r[0]!, r => (Definition: (Guid?)r[1], StateKey: (string)r[2]!));
+            var locks = RawSql.Rows<WorkflowState>(ctx, stateFk, instances.Values.Select(i => i.Definition).OfType<Guid>(),
+                    stateFk, nameof(WorkflowState.Key), nameof(WorkflowState.Caption), nameof(WorkflowState.LockedMembers))
+                .ToDictionary(r => ((Guid)r[0]!, (string)r[1]!), r => (Caption: (string)r[2]!, Members: DefinitionMapper.Members((string?)r[3])));
+
+            // Each subject's locked, modified, non-exempt members. No live instance or state row means nothing is locked; instance
+            // deletes are refused outside the runtime (DefinitionGuard), so that happens only by writes that bypass EF.
+            foreach (var e in modified)
+            {
+                var (type, id) = Key(e);
+                if (!instances.TryGetValue(persistedLink[Key(e)]!.Value, out var instance) || instance.Definition is not { } def
+                    || !locks.TryGetValue((def, instance.StateKey), out var state))
+                    continue;
+                foreach (var member in state.Members)
+                    if (e.Metadata.FindProperty(member) != null && e.Property(member).IsModified && scope?.IsAllowed(type, id, member) != true)
+                        candidates.Add((e, member, $"'{member}' is locked in state '{state.Caption}'"));
+            }
+        }
+
+        if (unstarted.Count > 0)
+        {
+            var initialLocks = InitialLocks(ctx, unstarted.Select(e => e.Metadata.ClrType), stateFk);
+            var baselines = new Dictionary<Type, object>();
+            foreach (var e in unstarted)
+            {
+                var (type, id) = Key(e);
+                foreach (var member in initialLocks[type])
+                {
+                    if (e.Metadata.FindProperty(member) is not { PropertyInfo: { } clr } property || scope?.IsAllowed(type, id, member) == true) continue;
+                    var refusal = $"'{member}' is locked until its workflow starts";
+                    if (e.State == EntityState.Modified)
+                    {
+                        if (e.Property(member).IsModified) candidates.Add((e, member, refusal));
+                    }
+                    // A new subject has no row: its value must be the one a new object of its type starts with.
+                    else if (!Same(e.Property(member), Provider(property, clr.GetValue(baselines.TryGetValue(type, out var b) ? b : baselines[type] = Baseline(type)))))
+                        throw new UserFriendlyException(refusal);
+                }
+            }
         }
         if (candidates.Count == 0) return;
 
@@ -118,11 +148,11 @@ public sealed class StateLockGuard : SaveChangesInterceptor
             var columns = group.Select(c => c.Member).Distinct().ToList();
             var stored = RawSql.Rows(ctx, group.Key.ClrType, Id, group.Select(c => ((IWorkflowSubject)c.Entry.Entity).ID), [Id, .. columns])
                 .ToDictionary(r => (Guid)r[0]!);
-            foreach (var (e, member, caption) in group)
+            foreach (var (e, member, refusal) in group)
             {
                 var row = stored.GetValueOrDefault(((IWorkflowSubject)e.Entity).ID);
                 if (row == null || !Same(e.Property(member), row[1 + columns.IndexOf(member)]))
-                    throw new UserFriendlyException($"'{member}' is locked in state '{caption}'");
+                    throw new UserFriendlyException(refusal);
             }
         }
     }
@@ -155,9 +185,39 @@ public sealed class StateLockGuard : SaveChangesInterceptor
     static bool Same(PropertyEntry current, object? stored)
     {
         var p = current.Metadata;
-        var value = p.GetTypeMapping().Converter is { } c ? c.ConvertToProvider(current.CurrentValue) : current.CurrentValue;
+        var value = Provider(p, current.CurrentValue);
         if (value == null || stored == null) return value == null && stored == null;
         return value.GetType() == stored.GetType() && p.GetProviderValueComparer().Equals(value, stored);
+    }
+
+    /// <summary>A CLR value in provider form: what EF would write for it (the property's converter, enums included).</summary>
+    static object? Provider(Microsoft.EntityFrameworkCore.Metadata.IProperty p, object? value) =>
+        p.GetTypeMapping().Converter is { } c ? c.ConvertToProvider(value) : value;
+
+    /// <summary>Per subject type: the members locked in the initial state of each of its Published definitions (union; CARD-2713).
+    /// A type without one locks nothing.</summary>
+    static Dictionary<Type, HashSet<string>> InitialLocks(DbContext ctx, IEnumerable<Type> types, string stateFk)
+    {
+        var byName = types.Distinct().ToDictionary(t => t.FullName!);
+        var definitions = DefinitionStore.PublishedFor(ctx, byName.Keys);
+        var initial = definitions.SelectMany(d => d).ToDictionary(d => d.Id, d => d.InitialState);
+        var locked = RawSql.Rows<WorkflowState>(ctx, stateFk, initial.Keys, stateFk, nameof(WorkflowState.Key), nameof(WorkflowState.LockedMembers))
+            .Where(r => initial[(Guid)r[0]!] == (string)r[1]!)
+            .ToLookup(r => (Guid)r[0]!, r => DefinitionMapper.Members((string?)r[2]));
+        return byName.ToDictionary(t => t.Value, t => definitions[t.Key].SelectMany(d => locked[d.Id].SelectMany(m => m)).ToHashSet());
+    }
+
+    /// <summary>What a new object of <paramref name="type"/> starts with: a fresh instance after XAF's OnCreated, so property
+    /// initializers and OnCreated defaults are not a change. An OnCreated that throws (it has no object space here) may have
+    /// set some members already, so the baseline is then a second instance, constructor only.</summary>
+    // ponytail: such a host's OnCreated defaults on a locked member are then refused on new records; give the fresh instance
+    // an object space if a host needs that.
+    internal static object Baseline(Type type)
+    {
+        var fresh = Activator.CreateInstance(type)!;
+        try { (fresh as IXafEntityObject)?.OnCreated(); }
+        catch (Exception) { fresh = Activator.CreateInstance(type)!; }
+        return fresh;
     }
 
     /// <summary>A subject entry's identity across subject types: its CLR type and ID.</summary>

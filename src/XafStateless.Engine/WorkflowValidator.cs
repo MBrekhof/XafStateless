@@ -7,6 +7,9 @@ public interface IWorkflowEnvironment
     string? CheckEffect(EffectDef effect);       // null = ok (member exists, writable, value converts; template placeholders exist)
     string? CheckMember(string member);          // null = ok (a member effects and locks may use)
     string? CheckRuleSet(RuleSetDef ruleSet) => null;   // null = ok (expressions parse and target members/types match)
+    /// <summary>null = ok: <paramref name="member"/> is a reference of the subject to the application's users, so a task or a
+    /// notification can address it as <c>@member</c> (CARD-2615). An environment that does not know users refuses.</summary>
+    string? CheckUserMember(string member) => $"'{member}' is not a reference to the application's users";
 }
 
 /// <summary>One validation finding. <see cref="State"/> names the state it is about (null: the definition as a whole, or
@@ -57,6 +60,12 @@ public static class WorkflowValidator
         {
             var outs = def.From(s.Key).ToList();
             void Add(string message) => errs.Add(new(message, s.Key));
+            // An '@' recipient is never a role: a role of that name would be ambiguous.
+            void Conflict(string target)
+            {
+                if (env.RoleExists(target))
+                    Add($"a role named '{target}' conflicts with the {(target == EffectDef.Requester ? "requester" : "user member")} recipient");
+            }
             if (!reach.Contains(s.Key)) Add($"'{s.Key}' is unreachable");
             if (s.Kind == StateKind.Final) { if (outs.Count > 0) Add($"final state '{s.Key}' has transitions"); }
             else if (outs.Count == 0) Add($"'{s.Key}' has no way out: make it Final, or add a transition from it");
@@ -73,6 +82,11 @@ public static class WorkflowValidator
                     break;
                 case StateKind.Task:
                     if (string.IsNullOrWhiteSpace(s.TaskRole)) Add($"task '{s.Key}' needs a role");
+                    else if (EffectDef.UserMember(s.TaskRole) is { } assignee)
+                    {
+                        Conflict(s.TaskRole);
+                        if (env.CheckUserMember(assignee) is { } err) Add($"task '{s.Key}': {err}");
+                    }
                     else if (!env.RoleExists(s.TaskRole)) Add($"role '{s.TaskRole}' does not exist");
                     foreach (var t in outs.Where(t => t.RequiredRole != null))
                         Add($"task '{s.Key}' outcome '{t.Trigger}' cannot require a role");
@@ -89,9 +103,10 @@ public static class WorkflowValidator
             }
             foreach (var e in s.Effects)
             {
-                if (e.Kind == EffectKind.Notify && e.Target == EffectDef.Requester)
+                if (e.Kind == EffectKind.Notify && (e.Target == EffectDef.Requester || EffectDef.UserMember(e.Target) != null))
                 {
-                    if (env.RoleExists(EffectDef.Requester)) Add($"a role named '{EffectDef.Requester}' conflicts with the requester recipient");
+                    Conflict(e.Target);
+                    if (EffectDef.UserMember(e.Target) is { } user && env.CheckUserMember(user) is { } notUser) Add($"effect on '{s.Key}': {notUser}");
                 }
                 else if (e.Kind == EffectKind.Notify && !env.RoleExists(e.Target)) Add($"role '{e.Target}' does not exist");
                 else if (e.Kind == EffectKind.RunRules && def.RuleSet(e.Target) == null)

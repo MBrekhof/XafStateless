@@ -31,6 +31,7 @@ public static class ModelBuilderExtensions
         {
             b.Property(t => t.Role).HasMaxLength(100);
             b.HasIndex(t => new { t.Role, t.State });
+            b.HasIndex(t => new { t.UserId, t.State });   // the task list's "assigned to me" (CARD-2615)
         });
         return mb;
     }

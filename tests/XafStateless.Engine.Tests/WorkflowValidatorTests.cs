@@ -14,6 +14,26 @@ public class WorkflowValidatorTests
 {
     static readonly FakeEnv Env = new("Approvers");
     static IReadOnlyList<string> V(WorkflowDef d) => WorkflowValidator.Validate(d, Env);
+
+    /// <summary>CARD-2615: an @member task role or Notify target goes to CheckUserMember, never to RoleExists; an environment
+    /// that does not implement it refuses (the default).</summary>
+    [Fact] public void At_member_targets_are_checked_as_user_members_and_refused_by_default()
+    {
+        var def = new WorkflowDef("u", 1, "a",
+            [
+                new("a", "A", StateKind.Manual, OnEntry: [new(EffectKind.Notify, "@Owner", "x")]),
+                new("t", "T", StateKind.Task, TaskRole: "@Owner"),
+                new("z", "Z", StateKind.Final),
+            ],
+            [new("a", "Go", "t"), new("t", "Done", "z")]);
+        var errs = V(def);
+        Assert.Equal(2, errs.Count(e => e.Contains("'Owner' is not a reference to the application's users")));
+        Assert.DoesNotContain(errs, e => e.Contains("role '@Owner' does not exist"));
+        Assert.Equal("Owner", EffectDef.UserMember("@Owner"));
+        Assert.Null(EffectDef.UserMember(EffectDef.Requester));
+        Assert.Null(EffectDef.UserMember("Approvers"));
+        Assert.Null(EffectDef.UserMember("@"));
+    }
     static WorkflowDef Pr => Fixtures.PurchaseRequest();
 
     [Fact] public void Fixture_is_valid() => Assert.Empty(V(Pr));

@@ -66,6 +66,9 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
     public string? CheckMember(string member) =>
         WorkflowMembers.Supported(target).Any(m => m.Name == member) ? null : $"'{member}' is not a member of {target.Name} that a workflow may use";
 
+    public string? CheckUserMember(string member) =>
+        WorkflowMembers.Users(target).Any(m => m.Name == member) ? null : $"'{member}' is not a reference of {target.Name} to the application's users";
+
     public string? CheckRuleSet(RuleSetDef ruleSet) =>
         RuleSetEvaluator.Validate(ruleSet, target.Type, m => WorkflowMembers.Supported(target).FirstOrDefault(x => x.Name == m)?.MemberType);
 

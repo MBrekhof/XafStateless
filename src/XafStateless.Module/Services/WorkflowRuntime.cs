@@ -91,9 +91,12 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, W
     {
         using var os = c.NewCommandSpace();
         var (x, refusal) = Load(os, c, By.Task, null, taskId, write: false);
-        if (refusal != null || x!.Task is not { State: TaskState.Open } task || task.StateKey != x.Instance!.StateKey || !c.InRole(task.Role)) return [];
+        if (refusal != null || x!.Task is not { State: TaskState.Open } task || task.StateKey != x.Instance!.StateKey || !MayDecide(c, task)) return [];
         return OutcomesOf(x.Def!, task.StateKey);
     }
+
+    /// <summary>A user's task (CARD-2615) is decided by that user only, by key; a role's task by its role.</summary>
+    static bool MayDecide(WorkflowCaller c, WorkflowTask task) => task.UserId is { } user ? c.UserId == user : c.InRole(task.Role);
 
     static List<string> OutcomesOf(WorkflowDef def, string stateKey) => def.From(stateKey).Select(t => t.Trigger).Distinct().ToList();
 
@@ -123,7 +126,8 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, W
             var task = x.Task!;
             if (task.State != TaskState.Open) return AlreadyDecided;
             if (task.StateKey != x.Instance!.StateKey) return LinkMismatch;   // an Open task always belongs to the current state
-            if (!c.InRole(task.Role)) return $"deciding this task requires the role '{task.Role}'";
+            if (!MayDecide(c, task))
+                return task.UserId != null ? $"this task is assigned to '{task.UserName}'" : $"deciding this task requires the role '{task.Role}'";
             if (!OutcomesOf(x.Def!, task.StateKey).Contains(outcome)) return $"'{outcome}' is not an outcome of this task";
             if (!Machine(x).Available().Any(t => t.Trigger == outcome)) return NotPossible(outcome, task.StateKey);
             // Decided before firing, so Enter's supersede leaves this task alone.
@@ -285,9 +289,17 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, W
                         x.Notes.Add("A requester notification was skipped: the workflow was started without a user (no requester).");
                         break;
                     }
+                    var toMember = EffectDef.UserMember(effect.Target);
+                    var recipient = toMember is null ? null : User(x, toMember);
+                    if (toMember != null && recipient is null)
+                    {
+                        x.Notes.Add($"A notification to '{toMember}' was skipped: it is empty or an inactive user.");
+                        break;
+                    }
                     var note = x.Os.CreateObject<WorkflowNotification>();
                     (note.Instance, note.State, note.CreatedUtc) = (instance, NotificationState.Pending, now);
                     if (toRequester) (note.UserId, note.UserName) = (instance.StartedById, instance.StartedBy);
+                    else if (recipient is { } r) (note.UserId, note.UserName) = (r.Id, r.Name);
                     else note.Role = effect.Target;
                     note.Body = Fill(x, effect.Value);
                     break;
@@ -323,12 +335,27 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, W
             case StateKind.Task:
                 var task = x.Os.CreateObject<WorkflowTask>();
                 (task.Instance, task.StateKey, task.Role, task.State) = (instance, key, state.TaskRole ?? "", TaskState.Open);
+                if (EffectDef.UserMember(state.TaskRole) is { } assignee)   // refused when empty: nobody could ever decide the task
+                {
+                    (task.UserId, task.UserName) = User(x, assignee)
+                        ?? throw new UserFriendlyException($"task '{key}' is assigned to '{assignee}', which is empty or an inactive user: set it first");
+                    task.Role = "";
+                }
                 task.Subject = Convert.ToString(x.Type.DefaultMember?.GetValue(x.Subject), CultureInfo.InvariantCulture) ?? x.Subject.ToString() ?? "";
                 break;
             case StateKind.Wait:
                 instance.DueUtc = now.AddMinutes(state.WaitMinutes ?? 0);
                 break;
         }
+    }
+
+    /// <summary>The active user a user member of the command space's subject holds now, by key and name; null when it is empty
+    /// or the user is inactive. A member that is not a user member (validation refuses that) throws.</summary>
+    static (Guid Id, string Name)? User(Cmd x, string member)
+    {
+        var m = WorkflowMembers.Users(x.Type).FirstOrDefault(u => u.Name == member)
+                ?? throw new InvalidOperationException($"'{member}' is not a reference of {x.Type.Name} to the application's users");
+        return m.GetValue(x.Subject) is ISecurityUser { IsActive: true } user ? ((Guid)m.MemberTypeInfo.KeyMember.GetValue(user), user.UserName) : null;
     }
 
     /// <summary>A Notify body or an action argument: its {Member} placeholders read from the subject. A null Notify body throws, as

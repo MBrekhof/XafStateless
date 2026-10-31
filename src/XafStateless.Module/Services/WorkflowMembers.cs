@@ -1,5 +1,6 @@
 using DevExpress.ExpressApp.DataLocking;
 using DevExpress.ExpressApp.DC;
+using DevExpress.ExpressApp.Security;
 using XafStateless.Module.BusinessObjects;
 
 namespace XafStateless.Module.Services;
@@ -13,6 +14,13 @@ public static class WorkflowMembers
         .Where(m => m.IsPublic && m.IsProperty && m.IsPersistent && !m.IsReadOnly && m.IsVisible && !m.IsKey && !m.IsList
                     && m.Name is not (nameof(IWorkflowSubject.Workflow) or nameof(IOptimisticLock.OptimisticLockField))
                     && IsScalar(m.MemberType))
+        .ToList();
+
+    /// <summary>The user members (CARD-2615): public persistent references to a Guid-keyed class implementing XAF's
+    /// <see cref="ISecurityUser"/>. A Task state or a Notify addresses one as <c>@Member</c>.</summary>
+    public static IReadOnlyList<IMemberInfo> Users(ITypeInfo target) => target.Members
+        .Where(m => m.IsPublic && m.IsProperty && m.IsPersistent && !m.IsList && typeof(ISecurityUser).IsAssignableFrom(m.MemberType)
+                    && m.MemberTypeInfo.KeyMember?.MemberType == typeof(Guid))
         .ToList();
 
     static bool IsScalar(Type t)

@@ -24,6 +24,22 @@ public sealed class DefinitionStore
         return state == DefinitionState.Draft || InTransaction(ctx) ? def : cache.GetOrAdd(definitionId, def);
     }
 
+    /// <summary>The Published definitions for <paramref name="subject"/>'s entity type (never a proxy type): what a subject without
+    /// a workflow is locked by (CARD-2713). Read from the database, so it needs no Read on definitions.</summary>
+    public IReadOnlyList<WorkflowDef> PublishedFor(IObjectSpace os, object subject)
+    {
+        var ctx = (os as EFCoreObjectSpace)?.DbContext ?? throw new NotSupportedException("DefinitionStore needs an EF Core object space.");
+        var type = ctx.Model.FindRuntimeEntityType(subject.GetType())?.ClrType ?? subject.GetType();
+        return PublishedFor(ctx, [type.FullName!])[type.FullName!].Select(d => Get(os, d.Id)).ToList();
+    }
+
+    /// <summary>Per subject type name (a full CLR name): its Published definitions' ids and initial states, from the database.</summary>
+    internal static ILookup<string, (Guid Id, string InitialState)> PublishedFor(DbContext ctx, IEnumerable<string> typeNames) =>
+        RawSql.Rows<WorkflowDefinition>(ctx, nameof(WorkflowDefinition.TargetTypeName), typeNames,
+                nameof(WorkflowDefinition.ID), nameof(WorkflowDefinition.TargetTypeName), nameof(WorkflowDefinition.InitialStateKey), nameof(WorkflowDefinition.State))
+            .Where(r => (DefinitionState)(int)r[3]! == DefinitionState.Published)
+            .ToLookup(r => (string)r[1]!, r => ((Guid)r[0]!, (string)r[2]!));
+
     public WorkflowDefinition? Published(IObjectSpace os, string name) =>
         os.FirstOrDefault<WorkflowDefinition>(d => d.Name == name && d.State == DefinitionState.Published);
 

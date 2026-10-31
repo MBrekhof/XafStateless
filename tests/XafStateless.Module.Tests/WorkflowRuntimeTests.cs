@@ -491,15 +491,18 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
     }
 
     /// <summary>theory -Fail-> count (Decision; Increment <paramref name="member"/> by <paramref name="step"/>) -Limit [criteria]-> failed / -Retry-> theory; theory -Pass-> passed.
-    /// theory locks the counter: the runtime's own increment is exempt (XSM-031).</summary>
-    static WorkflowDef Counting(string name, string member, string step, string limit) => new(name, 1, "theory",
+    /// theory locks the counter: the runtime's own increment is exempt (XSM-031). It starts in an unlocked "open" (-Begin-> theory):
+    /// an initial state's locks would lock every unstarted request in this database (CARD-2713).</summary>
+    static WorkflowDef Counting(string name, string member, string step, string limit) => new(name, 1, "open",
         [
+            new("open", "Open", StateKind.Manual),
             new("theory", "Theory", StateKind.Manual, Locked: [member]),
             new("count", "Count", StateKind.Decision, OnEntry: [new(EffectKind.Increment, member, step)]),
             new("failed", "Failed", StateKind.Final),
             new("passed", "Passed", StateKind.Final),
         ],
         [
+            new("open", "Begin", "theory"),
             new("theory", "Fail", "count"),
             new("theory", "Pass", "passed"),
             new("count", "Limit", "failed", Criteria: limit, Order: 0),
@@ -517,6 +520,7 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
             os.CommitChanges();
         }
         Ok(rt.Start(Alice(), typeof(PurchaseRequest), id, def.Name));
+        Ok(rt.Fire(Alice(), typeof(PurchaseRequest), id, "Begin"));
         return id;
     }
 
@@ -733,14 +737,16 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
     [Fact] public void RunRules_computes_params_and_updates_locked_members_and_decision_sees_it()
     {
         var name = Unique();
-        var def = new WorkflowDef(name, 1, "draft",
+        var def = new WorkflowDef(name, 1, "open",   // an unlocked initial state: its locks would lock every unstarted request here (CARD-2713)
             [
+                new("open", "Open", StateKind.Manual),
                 new("draft", "Draft", StateKind.Manual, Locked: ["Amount", "Revisions"]),
                 new("calculate", "Calculate", StateKind.Decision, OnEntry: [new(EffectKind.RunRules, "pricing", "")]),
                 new("vip-ordered", "VIP Ordered", StateKind.Final, OnEntry: [new(EffectKind.SetField, "Ordered", "true")]),
                 new("standard", "Standard", StateKind.Final),
             ],
             [
+                new("open", "Begin", "draft"),
                 new("draft", "Submit", "calculate"),
                 new("calculate", "VIP", "vip-ordered", Criteria: "Amount < 900m && Revisions == 2", Order: 0),
                 new("calculate", "Standard", "standard", Order: 1),
@@ -757,6 +763,7 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
         var id = NewRequest(1000m);
         var cold = new WorkflowRuntime(new DefinitionStore(), clock, actions);
         Ok(cold.Start(Alice(), typeof(PurchaseRequest), id, name));
+        Ok(cold.Fire(Alice(), typeof(PurchaseRequest), id, "Begin"));
         Ok(cold.Fire(Alice(), typeof(PurchaseRequest), id, "Submit"));
 
         var req = Request(id);

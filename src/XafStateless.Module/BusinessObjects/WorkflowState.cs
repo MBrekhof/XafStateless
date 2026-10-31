@@ -37,12 +37,17 @@ public class WorkflowState : BaseObject, IStringLookupSource
     [NotMapped, VisibleInDetailView(false)]
     public string? Problem => StateProblems.Get(this);
 
-    /// <summary>TaskRole: role names. LockedMembers: the subject's members that effects and locks may use.</summary>
+    /// <summary>TaskRole: role names and the subject's user members (<c>@Member</c>). LockedMembers: the subject's members that
+    /// effects and locks may use.</summary>
     public IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames) => memberName switch
     {
-        nameof(TaskRole) => roleNames(),
+        nameof(TaskRole) => [.. UserTargets(Definition), .. roleNames()],
         nameof(LockedMembers) => XafTypesInfo.Instance.FindTypeInfo(Definition?.TargetTypeName ?? "") is { } target
             ? WorkflowMembers.Supported(target).Select(m => m.Name) : [],
         _ => [],
     };
+
+    /// <summary>The definition's subject's user members as recipients: <c>@Member</c>.</summary>
+    internal static IEnumerable<string> UserTargets(WorkflowDefinition? definition) =>
+        XafTypesInfo.Instance.FindTypeInfo(definition?.TargetTypeName ?? "") is { } target ? WorkflowMembers.Users(target).Select(m => "@" + m.Name) : [];
 }

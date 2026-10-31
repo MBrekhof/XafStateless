@@ -57,7 +57,7 @@ public sealed class WorkflowTaskController : ObjectViewController<DetailView, Wo
     }
 }
 
-/// <summary>The Tasks navigation list: open tasks of the logged-on user's roles, or all open tasks for an administrator (the
+/// <summary>The Tasks navigation list: open tasks of the logged-on user's roles and those assigned to the user, or all open tasks for an administrator (the
 /// roles are read from the user security logged on, so no secured role read is needed).</summary>
 public sealed class MyTasksController : ObjectViewController<ListView, WorkflowTask>
 {
@@ -72,15 +72,19 @@ public sealed class MyTasksController : ObjectViewController<ListView, WorkflowT
     protected override void OnActivated()
     {
         base.OnActivated();
-        View.CollectionSource.Criteria[Key] = Criteria(WorkflowCommand.RoleNames(Application), WorkflowCommand.IsAdministrator(Application));
+        View.CollectionSource.Criteria[Key] = Criteria(WorkflowCommand.RoleNames(Application), WorkflowCommand.IsAdministrator(Application),
+            Application.Security?.UserId as Guid?);
     }
 
-    /// <summary>Open tasks: every one for an administrator, else only those of the user's roles.</summary>
-    internal static CriteriaOperator Criteria(IReadOnlyList<string> roles, bool administrator)
+    /// <summary>Open tasks: every one for an administrator, else those of the user's roles and those assigned to the user.</summary>
+    internal static CriteriaOperator Criteria(IReadOnlyList<string> roles, bool administrator, Guid? userId)
     {
         var open = new BinaryOperator(nameof(WorkflowTask.State), TaskState.Open);
         if (administrator) return open;
-        return roles.Count == 0 ? CriteriaOperator.Parse("1 = 0") : CriteriaOperator.And(open, new InOperator(nameof(WorkflowTask.Role), roles));
+        var mine = new List<CriteriaOperator>();
+        if (roles.Count > 0) mine.Add(new InOperator(nameof(WorkflowTask.Role), roles));
+        if (userId is { } id) mine.Add(new BinaryOperator(nameof(WorkflowTask.UserId), id));
+        return mine.Count == 0 ? CriteriaOperator.Parse("1 = 0") : CriteriaOperator.And(open, CriteriaOperator.Or(mine));
     }
 
     protected override void OnDeactivated()

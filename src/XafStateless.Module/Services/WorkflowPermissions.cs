@@ -38,8 +38,8 @@ public static class WorkflowPermissions
 
     /// <summary>CRUD on each subject type except writing its <c>Workflow</c> link; read on the definition types; navigation to
     /// Tasks, Notifications and each subject. Runtime rows are read-only (the runtime writes them) and scoped by object permissions:
-    /// tasks and notifications addressed to this role (<c>[Role] = r.Name</c>), notifications addressed to the logged-on user
-    /// (a requester's, <c>[UserId] = CurrentUserId()</c>), instances of the granted subject types (one
+    /// tasks and notifications addressed to this role (<c>[Role] = r.Name</c>), tasks and notifications addressed to the logged-on
+    /// user (a requester's, or a user member's: <c>[UserId] = CurrentUserId()</c>), instances of the granted subject types (one
     /// permission per type, so a subject added later adds one row). A user holding several roles sees the union.</summary>
     /// <param name="subjects">A navigation item id (assumed in the Default group) or a full item path (contains '/').</param>
     /// <remarks>Set the role's Name before calling: the task and notification scope captures it.</remarks>
@@ -65,6 +65,7 @@ public static class WorkflowPermissions
         foreach (var t in DefinitionTypes) Type(r, t, SecurityOperations.Read);
         RoleRows(r, scoped);
         RequesterRows(r, scoped);
+        AssigneeRows(r, scoped);
         Navigation(r, NavigationGroup + ListView(typeof(WorkflowTask)));
         Navigation(r, NavigationGroup + ListView(typeof(WorkflowNotification)));
     }
@@ -88,6 +89,15 @@ public static class WorkflowPermissions
     /// rows are per type, a type left out is not readable, unless the role's instance rows name it.</remarks>
     public static void GrantRequesterRows(PermissionPolicyRole r, params (Type subjectType, string? scope)[] subjects) =>
         RequesterRows(r, Validate(subjects));
+
+    /// <summary>Read on the tasks assigned to the logged-on user through a user member (<c>@Member</c>, CARD-2615): role-wide
+    /// <c>[UserId] = CurrentUserId()</c>, or per type and joined to the subject as <see cref="GrantRoleRows"/> describes. A user's
+    /// notifications are read through the requester rows (<see cref="GrantRequesterRows"/>): the same criteria.</summary>
+    /// <remarks>As for <see cref="GrantRequesterRows"/>, pass every subject type the role's users may be assigned on.</remarks>
+    public static void GrantAssigneeRows(PermissionPolicyRole r, params (Type subjectType, string? scope)[] subjects) =>
+        AssigneeRows(r, Validate(subjects));
+
+    static void AssigneeRows(PermissionPolicyRole r, List<Subject> subjects) => Rows(r, AssigneeFamily, subjects, ServedTypes(r));
 
     static void RequireName(PermissionPolicyRole r)
     {
@@ -115,6 +125,7 @@ public static class WorkflowPermissions
     }
     static Family NoteFamily(string role) => TaskFamily(role) with { Target = typeof(WorkflowNotification) };
     static readonly Family RequesterFamily = new(typeof(WorkflowNotification), CriteriaOperator.Parse(RequesterText), RequesterText, "Instance.SubjectType", "Instance.SubjectId");
+    static readonly Family AssigneeFamily = RequesterFamily with { Target = typeof(WorkflowTask) };
     static readonly Family InstanceFamily = new(typeof(WorkflowInstance), null, null, nameof(WorkflowInstance.SubjectType), nameof(WorkflowInstance.SubjectId));
 
     static List<Subject> Validate(IEnumerable<(Type type, string? scope)> subjects)

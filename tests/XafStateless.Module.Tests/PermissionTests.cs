@@ -551,8 +551,67 @@ public class PermissionTests : IClassFixture<TestDb>
     {
         using var os = db.NewObjectSpace();
         var u = os.FirstOrDefault<ApplicationUser>(x => x.UserName == userName);
-        return user.GetObjects<WorkflowTask>(MyTasksController.Criteria(WorkflowCommand.RoleNames(u), WorkflowCommand.IsAdministrator(u)))
+        return user.GetObjects<WorkflowTask>(MyTasksController.Criteria(WorkflowCommand.RoleNames(u), WorkflowCommand.IsAdministrator(u), u?.ID))
             .Select(t => t.ID).ToList();
+    }
+
+    /// <summary>CARD-2615: a task assigned through a user member (<c>@Buyer</c>) is read by that user, whose role has the
+    /// assignee rows (GrantParticipant includes them; GrantAssigneeRows on its own), and by nobody else through them.</summary>
+    [Fact] public void A_task_assigned_to_a_user_is_read_by_that_user_only()
+    {
+        var name = Publish(new WorkflowDef($"ua-{Guid.NewGuid():N}", 1, "draft",
+            [new("draft", "Draft", StateKind.Manual), new("review", "Review", StateKind.Task, TaskRole: "@Buyer"), new("done", "Done", StateKind.Final)],
+            [new("draft", "Submit", "review"), new("review", "Approve", "done")]));
+        (Guid Request, Guid Task) Assigned(string userName)
+        {
+            Guid request;
+            using (var os = db.NewObjectSpace())
+            {
+                var pr = os.CreateObject<PurchaseRequest>();
+                (pr.Title, pr.Buyer) = ("Assigned", os.FirstOrDefault<ApplicationUser>(u => u.UserName == userName));
+                os.CommitChanges();
+                request = pr.ID;
+            }
+            Ok(rt.Start(db.Caller("system"), typeof(PurchaseRequest), request, name));
+            Ok(rt.Fire(db.Caller("system"), typeof(PurchaseRequest), request, "Submit"));
+            using var check = db.NewObjectSpace();
+            return (request, check.GetObjectsQuery<WorkflowTask>().Single(t => t.Instance!.SubjectId == request).ID);
+        }
+        var assignee = $"assignee-{Guid.NewGuid():N}";   // an Approvers user of its own: the shared approver's task set stays as other tests expect
+        using (var os = db.NewObjectSpace())
+        {
+            var u = os.CreateObject<ApplicationUser>();
+            (u.UserName, u.IsActive) = (assignee, true);
+            u.SetPassword("");
+            u.Roles.Add(os.FirstOrDefault<PermissionPolicyRole>(r => r.Name == "Approvers")!);
+            os.CommitChanges();
+            ((ISecurityUserWithLoginInfo)u).CreateUserLoginInfo(SecurityDefaults.PasswordAuthentication, os.GetKeyValueAsString(u));
+            os.CommitChanges();
+        }
+        var ((mineRequest, mine), (_, theirs)) = (Assigned(assignee), Assigned(Reader));
+
+        using (var provider = LogOn(assignee))
+        using (var user = provider.CreateObjectSpace())
+        {
+            var readable = user.GetObjects<WorkflowTask>().Select(t => t.ID).ToList();
+            Assert.Contains(mine, readable);
+            Assert.DoesNotContain(theirs, readable);
+            Assert.Contains(mine, Listed(user, assignee));
+            Assert.Equal(mine, OpenTask(user, mineRequest));   // the subject's Open task action finds it
+        }
+
+        using (var os = db.NewObjectSpace())
+        {
+            WorkflowPermissions.GrantAssigneeRows(os.FirstOrDefault<PermissionPolicyRole>(r => r.Name == "Readers")!, (typeof(PurchaseRequest), null));
+            os.CommitChanges();
+        }
+        using (var provider = LogOn(Reader))
+        using (var user = provider.CreateObjectSpace())
+        {
+            var readable = user.GetObjects<WorkflowTask>().Select(t => t.ID).ToList();
+            Assert.Contains(theirs, readable);
+            Assert.DoesNotContain(mine, readable);
+        }
     }
 
     [Fact] public void Administrator_is_the_IsAdministrative_role_not_a_role_name()

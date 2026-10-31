@@ -20,7 +20,14 @@ internal static class RawSql
         Rows(ctx, typeof(T), keyProperty, keys, columns);
 
     /// <summary>The same for an entity type known only at run time (a host's subject type).</summary>
-    public static List<object?[]> Rows(DbContext ctx, Type entityType, string keyProperty, IEnumerable<Guid> keys, params string[] columns)
+    public static List<object?[]> Rows(DbContext ctx, Type entityType, string keyProperty, IEnumerable<Guid> keys, params string[] columns) =>
+        Query(ctx, entityType, keyProperty, keys.Cast<object>(), columns);
+
+    /// <summary>The same with text keys (a definition's TargetTypeName).</summary>
+    public static List<object?[]> Rows<T>(DbContext ctx, string keyProperty, IEnumerable<string> keys, params string[] columns) =>
+        Query(ctx, typeof(T), keyProperty, keys, columns);
+
+    static List<object?[]> Query(DbContext ctx, Type entityType, string keyProperty, IEnumerable<object> keys, string[] columns)
     {
         var rows = new List<object?[]>();
         var list = keys.Distinct().ToList();

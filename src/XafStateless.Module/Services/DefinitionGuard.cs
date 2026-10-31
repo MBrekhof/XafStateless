@@ -258,7 +258,7 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         [nameof(WorkflowTask.State), nameof(WorkflowTask.DecidedBy), nameof(WorkflowTask.Outcome), nameof(WorkflowTask.DecidedUtc)];
 
     /// <summary>Tasks are written by the runtime only: inserts, and changes to State/DecidedBy/Outcome/DecidedUtc, only inside a
-    /// <see cref="RuntimeScope"/> bound to the saving context. Instance, StateKey, Role and Subject are fixed after insert, even inside the scope; tasks are
+    /// <see cref="RuntimeScope"/> bound to the saving context. Instance, StateKey, Role, UserId, UserName and Subject are fixed after insert, even inside the scope; tasks are
     /// never deleted (hard or soft). Judged against the database rows (one query), never the change tracker's original values.</summary>
     static void CheckTasks(DbContext ctx, List<EntityEntry<WorkflowTask>> tasks, bool inScope)
     {
@@ -269,7 +269,8 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         if (modified.Count == 0) return;
 
         var fk = RawSql.ForeignKey<WorkflowTask>(ctx, nameof(WorkflowTask.Instance));
-        string[] fixedColumns = [fk, nameof(WorkflowTask.StateKey), nameof(WorkflowTask.Role), nameof(WorkflowTask.Subject), GCRecord];
+        string[] fixedColumns = [fk, nameof(WorkflowTask.StateKey), nameof(WorkflowTask.Role), nameof(WorkflowTask.UserId), nameof(WorkflowTask.UserName),
+            nameof(WorkflowTask.Subject), GCRecord];
         var rows = RawSql.Rows<WorkflowTask>(ctx, Id, modified.Select(e => e.Entity.ID), [Id, .. fixedColumns, .. TaskRuntimeColumns])
             .ToDictionary(r => (Guid)r[0]!);
         foreach (var e in modified)
@@ -280,7 +281,7 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
                 : e.Property(column).CurrentValue;
             for (var i = 0; i < fixedColumns.Length; i++)
                 if (!Same(Now(fixedColumns[i]), row[1 + i]))
-                    throw RefuseTask("a task's instance, state, role and subject are fixed once created, and a task cannot be deleted.");
+                    throw RefuseTask("a task's instance, state, role, user and subject are fixed once created, and a task cannot be deleted.");
             if (inScope) continue;
             for (var i = 0; i < TaskRuntimeColumns.Length; i++)
                 if (!Same(Now(TaskRuntimeColumns[i]), row[1 + fixedColumns.Length + i]))
