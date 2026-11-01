@@ -1,4 +1,29 @@
-# Session handoff — 2026-11-01
+# Session handoff — 2026-11-01 (late)
+
+## This session (2026-11-01, late): a notification keeps its values (CARD-2788, CARD-2783)
+
+- `881842f`, `a20ea26`, `0bed660` (branch `card-2788`, fast-forwarded into master): the runtime stores each Notify
+  placeholder's text at notify time plus the records it read, in the shadow column `WorkflowNotifications.Snapshot`
+  (declared by `ConfigureXafStateless`; no XAF member). `Render` replays the permission checks per recipient on those
+  records, loaded again through a secured query. A criteria-hidden or deleted record masks, with or without prefetch
+  (CARD-2783's docs sentence is fixed by behaviour). Calculated members, collections, composite keys and references
+  without a stored default member render live, as 0.4 did. **Schema change**: `WorkflowNotifications.Snapshot
+  nvarchar(max) NULL`. Demo `PurchaseRequest.Summary` ([NotMapped], hidden) exists for the tests.
+- Three Gemini reviews (plan, diff, diff); each finding settled in
+  `docs/plans/2026-11-01-card-2788-notification-snapshot.md`. Findings left open became cards: temporary IDENTITY keys
+  (CARD-2809), Middle Tier exposure (CARD-2810, a decision), untested chained default member (CARD-2811), guards reading
+  the navigation before the FK (CARD-2812).
+- **Not released.** 0.5.0 waits for Martin's go; BPG then bumps and adds the E2E check from CARD-2788.
+- Martin's uncommitted DevExpress 26.1.6 bump (Directory.Build.props + both demo csprojs) still sits in the main tree,
+  untouched. With it, two designer E2E tests time out (a combo box's `aria-controls` is empty): CARD-2794. The E2E runs
+  this session used a worktree on 26.1.4: 5/5.
+- Board: CARD-2778 (MainPage NRE) closed as XAF's own (`MainPage.razor.cs:317-348`); CARD-2767 (flaky fixtures) not
+  reproduced in three runs, hypothesis on the card, moved to Backlog.
+- Tests: Engine 59, Module 248, E2E 5/5; 16 of 17 mutations killed (survivor = CARD-2811).
+- Scratchpad tools worth keeping in mind: an E2E cycle script (fresh `XafStatelessE2E`, seed, run, stop, drop) and a
+  mutation runner; both were session-local.
+
+# Previous session — 2026-11-01
 
 ## This session (2026-11-01): mail bodies rendered per recipient (CARD-2597), reference locks (CARD-2735)
 
