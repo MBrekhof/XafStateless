@@ -14,9 +14,10 @@
   (CARD-2809), Middle Tier exposure (CARD-2810, a decision), untested chained default member (CARD-2811), guards reading
   the navigation before the FK (CARD-2812).
 - **Not released.** 0.5.0 waits for Martin's go; BPG then bumps and adds the E2E check from CARD-2788.
-- Martin's uncommitted DevExpress 26.1.6 bump (Directory.Build.props + both demo csprojs) still sits in the main tree,
-  untouched. With it, two designer E2E tests time out (a combo box's `aria-controls` is empty): CARD-2794. The E2E runs
-  this session used a worktree on 26.1.4: 5/5.
+- `0df3de4`: Martin's DevExpress 26.1.6 bump committed (his go): the demo pins 26.1.6, the packages' range is
+  `[26.1.6,26.2)` from 0.5.0 on (hosts must be on 26.1.6; BPGDemo already resolves it). On 26.1.6 a combo box sets
+  `aria-controls` only once its dropdown is open, which broke the E2E `Pick` helper (CARD-2794); it now waits for the
+  open dropdown. E2E 5/5 on 26.1.6, three runs.
 - Board: CARD-2778 (MainPage NRE) closed as XAF's own (`MainPage.razor.cs:317-348`); CARD-2767 (flaky fixtures) not
   reproduced in three runs, hypothesis on the card, moved to Backlog.
 - Tests: Engine 59, Module 248, E2E 5/5; 16 of 17 mutations killed (survivor = CARD-2811).
