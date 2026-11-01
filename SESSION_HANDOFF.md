@@ -8,7 +8,9 @@
   in-app list shows `WorkflowNotification.Text`, rendered for the viewer. A state can lock a reference member
   (`WorkflowMembers.Lockable`; `StateLockGuard` judges its foreign key). Plan, reviews and verification:
   `docs/plans/2026-11-01-card-2597-2735-per-recipient-mail-and-reference-locks.md`.
-- **Not released.** 0.4.0 (CARD-2615 (1), CARD-2713, CARD-2597, CARD-2735) waits for Martin's go. Then BPGDemo's
+- **0.4.0 published** to the private feed (Engine, Module, Blazor; Martin's go 2026-11-01): CARD-2615 (1), CARD-2713,
+  CARD-2597, CARD-2735. Schema change for every host (WorkflowTask UserId/UserName + index, WorkflowNotification
+  IsTemplate). DevExpress range still [26.1.4,26.2): Martin's uncommitted 26.1.6 bump is not in it. Then BPGDemo's
   `DispatchWorkflowNotificationsHandler` must call `Render` per recipient inside its signed-in scope (it mails
   `notification.Body` today, which would now be the raw template), and BPG's `SpecWorkflowChecks` resolves
   `LockedPropertyIds` against relations too.
