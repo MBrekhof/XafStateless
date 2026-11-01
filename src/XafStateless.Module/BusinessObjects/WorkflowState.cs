@@ -37,13 +37,13 @@ public class WorkflowState : BaseObject, IStringLookupSource
     [NotMapped, VisibleInDetailView(false)]
     public string? Problem => StateProblems.Get(this);
 
-    /// <summary>TaskRole: role names and the subject's user members (<c>@Member</c>). LockedMembers: the subject's members that
-    /// effects and locks may use.</summary>
+    /// <summary>TaskRole: role names and the subject's user members (<c>@Member</c>). LockedMembers: the subject's members a
+    /// state may lock, references included (CARD-2735).</summary>
     public IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames) => memberName switch
     {
         nameof(TaskRole) => [.. UserTargets(Definition), .. roleNames()],
         nameof(LockedMembers) => XafTypesInfo.Instance.FindTypeInfo(Definition?.TargetTypeName ?? "") is { } target
-            ? WorkflowMembers.Supported(target).Select(m => m.Name) : [],
+            ? WorkflowMembers.Lockable(target).Select(m => m.Name) : [],
         _ => [],
     };
 

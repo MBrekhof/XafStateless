@@ -153,7 +153,7 @@ public class UserAssigneeTests : IClassFixture<TestDb>
         var id = NewRequest("Desk", buyer);
         Ok(rt.Start(Caller("starter", other), typeof(PurchaseRequest), id, name));
         var note = Notes(id).Single();
-        Assert.Equal((buyer, "buyer", "", "Started: Desk"), (note.UserId!.Value, note.UserName, note.Role, note.Body));
+        Assert.Equal((buyer, "buyer", "", "Started: Desk"), (note.UserId!.Value, note.UserName, note.Role, WorkflowNotifications.Render(note, db.NewObjectSpace(), null)));
 
         var empty = NewRequest("Lamp", null);
         var r = rt.Start(Caller("starter", other), typeof(PurchaseRequest), empty, name);

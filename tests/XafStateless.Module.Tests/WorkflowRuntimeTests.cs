@@ -187,7 +187,8 @@ public class WorkflowRuntimeTests : IClassFixture<TestDb>
         Assert.Equal(("Approvers", "approval", title), (task.Role, task.StateKey, task.Subject));
         Assert.Equal(["Approve", "Reject"], rt.Outcomes(Alice(), task.ID));
         var note = Assert.Single(Notifications(inst), n => n.State == NotificationState.Pending);
-        Assert.Contains(title, note.Body);
+        using var os = db.NewObjectSpace();
+        Assert.Contains(title, WorkflowNotifications.Render(os.GetObjectByKey<WorkflowNotification>(note.ID), os, null));
         Assert.Equal("Approvers", note.Role);
     }
 

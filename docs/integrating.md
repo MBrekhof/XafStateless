@@ -337,9 +337,11 @@ public class PurchaseRequest : BaseObject, IWorkflowSubject
   `ISecurityUser` (`PermissionPolicyUser` and the template's `ApplicationUser` are), e.g.
   `public virtual ApplicationUser? Buyer { get; set; }`. A Task state's role or a Notify recipient can address it as
   `@Buyer` (step 9).
-- The members that effects (Set field, Increment) and field locks can use are the public, persistent, writable, browsable
+- The members that effects (Set field, Increment) can use are the public, persistent, writable, browsable
   scalar members: string, number, bool, DateTime, Guid and enum. `ID`, `Workflow`, the lock field, references and
-  collections are excluded. Increment counts on whole-number and decimal members only (null counts as 0; the step is the
+  collections are excluded. Field locks take those plus references (CARD-2735): a locked `Project` refuses a save that
+  changes its key (the navigation or the foreign key, shadow or declared), and its lookup editor is disabled. Not a
+  one-to-one's inverse side, whose key sits on the other row. Increment counts on whole-number and decimal members only (null counts as 0; the step is the
   effect's Value, 1 when empty), so a Decision after it can limit attempts: `rework` increments `Attempts`, and the
   Decision's first branch `Attempts >= 3` leads to a Final state. A result outside the member's range refuses the
   command and commits nothing.
@@ -396,8 +398,8 @@ A Notify effect writes a `WorkflowNotification` row (the outbox), in the same co
   - `Role`: a role name, for a Notify addressed to a role;
   - `UserId` (with `UserName` as a display snapshot): a single user, for a Notify addressed to `@requester` or to a
     user member (`@Buyer`);
-- `Body`: the template with `{Member}` placeholders filled in. A placeholder reads any member of the subject, whatever the
-  recipient role's member-level Read permissions: designers are trusted not to put hidden members into a notification;
+- `Body`: the Notify text as written, with its `{Member}` or `{Reference.Member}` placeholders **not** filled in
+  (`IsTemplate` = true; since 0.4.0). The host fills it per recipient (below);
 - `State` = `Pending`, plus `Attempts`, `LastError` and `CreatedUtc`.
 
 **The requester.** The Target lookup of a Notify effect offers `@requester` first: the user who started the workflow.
@@ -420,13 +422,29 @@ members as `@Member` (step 7). Each reads the user the member holds when the sta
   while the task is open does not move it; the next task the workflow opens reads the new value. Users read their tasks
   through `[UserId] = CurrentUserId()` (`GrantParticipant` adds it; `GrantAssigneeRows` on its own, step 6).
 
-A notification's recipient, `Body`, `Instance` and `CreatedUtc` are fixed once written; delivery may change `State`,
-`Attempts` and `LastError`.
+A notification's recipient, `Body`, `IsTemplate`, `Instance` and `CreatedUtc` are fixed once written; delivery may
+change `State`, `Attempts` and `LastError`.
 
 The host delivers the rows. Read the `Pending` rows through a non-secured object space, deliver each one (resolve the
 role, or the user by `UserId`, to addresses however the host does that; a user that no longer exists is a failed
-delivery), then set `State` to `Sent`, or to `Failed` with `LastError`, and increase `Attempts`. The demo's `LogNotificationDispatcher` (`XafStateless.Demo.Blazor.Server/`) only logs each row
-and marks it Sent every 30 seconds. It has the same shape as the timer: a `BackgroundService` with a scope per tick.
+delivery), then set `State` to `Sent`, or to `Failed` with `LastError`, and increase `Attempts`.
+
+**Render the text per recipient** (CARD-2597): `WorkflowNotifications.Render(note, space, security)`, once for every
+recipient, with a scope signed in as that recipient: its secured object space and its `ISecurityStrategyBase` (as
+`IRequestSecurityStrategy`). The note may come from the dispatcher's non-secured space: only its subject's type and key
+are read, and the subject is loaded in `space`. Each placeholder shows what that recipient may read, as the app shows it
+to them:
+- a member they may not read (member deny, or a reference to a type they may not read): `*******`
+  (`WorkflowNotifications.Masked`);
+- a reference whose object their criteria hide: empty, as their views show it (the secured space returns it as null);
+- the whole subject unreadable, or not found: every placeholder `*******`.
+
+Values are those at render time, not at state entry. A role notification is rendered once per user of the role, never
+once per row: a text rendered for one user may hold what another may not read. `security: null` fills everything
+(for a log, never for mail). A row written before 0.4.0 (`IsTemplate` false) holds the text filled then and is returned
+as stored. The demo's `LogNotificationDispatcher` (`XafStateless.Demo.Blazor.Server/`) logs each row with
+`security: null` and marks it Sent every 30 seconds. It has the same shape as the timer: a `BackgroundService` with a
+scope per tick.
 
 ```csharp
 using var scope = scopes.CreateScope();
@@ -434,7 +452,9 @@ using var os = scope.ServiceProvider.GetRequiredService<INonSecuredObjectSpaceFa
 var pending = os.GetObjectsQuery<WorkflowNotification>().Where(n => n.State == NotificationState.Pending).OrderBy(n => n.CreatedUtc).ToList();
 foreach (var n in pending)
 {
-    // deliver n.Body to the users of role n.Role here
+    // for each user of role n.Role (or the user n.UserId): sign them in on a scope of their own, then
+    //   var body = WorkflowNotifications.Render(n, securedSpace, security);
+    // and deliver body to them
     (n.State, n.Attempts) = (NotificationState.Sent, n.Attempts + 1);
 }
 os.CommitChanges();

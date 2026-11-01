@@ -228,7 +228,7 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
     }
 
     /// <summary>Notifications are written into the outbox by the runtime only (inside its scope). After insert the recipient
-    /// (Role, UserId, UserName), Body, Instance and CreatedUtc are fixed, for every caller; delivery updates (State, Attempts,
+    /// (Role, UserId, UserName), Body, IsTemplate (a cleared one would mail the raw template), Instance and CreatedUtc are fixed, for every caller; delivery updates (State, Attempts,
     /// LastError) by a dispatcher, and deletes, are not restricted here. Judged against the database rows.</summary>
     static void CheckNotifications(DbContext ctx, List<EntityEntry<WorkflowNotification>> notifications, bool runtime)
     {
@@ -238,7 +238,7 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         if (modified.Count == 0) return;
         var fk = RawSql.ForeignKey<WorkflowNotification>(ctx, nameof(WorkflowNotification.Instance));
         string[] fixedColumns = [nameof(WorkflowNotification.Role), nameof(WorkflowNotification.UserId), nameof(WorkflowNotification.UserName),
-            nameof(WorkflowNotification.Body), fk, nameof(WorkflowNotification.CreatedUtc)];
+            nameof(WorkflowNotification.Body), nameof(WorkflowNotification.IsTemplate), fk, nameof(WorkflowNotification.CreatedUtc)];
         var rows = RawSql.Rows<WorkflowNotification>(ctx, Id, modified.Select(e => e.Entity.ID), [Id, .. fixedColumns]).ToDictionary(r => (Guid)r[0]!);
         foreach (var e in modified)
         {

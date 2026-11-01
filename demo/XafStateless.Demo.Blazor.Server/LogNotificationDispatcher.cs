@@ -1,5 +1,6 @@
 using DevExpress.ExpressApp;
 using XafStateless.Module.BusinessObjects;
+using XafStateless.Module.Services;
 
 namespace XafStateless.Demo.Blazor.Server;
 
@@ -19,8 +20,10 @@ public sealed class LogNotificationDispatcher(IServiceScopeFactory scopes, ILogg
                 var pending = os.GetObjectsQuery<WorkflowNotification>().Where(n => n.State == NotificationState.Pending).OrderBy(n => n.CreatedUtc).ToList();
                 foreach (var n in pending)
                 {
-                    if (n.UserId is { } user) log.LogInformation("Notification to user {UserName} ({UserId}): {Body}", n.UserName, user, n.Body);
-                    else log.LogInformation("Notification to role {Role}: {Body}", n.Role, n.Body);
+                    // A log, so unmasked (security: null). A mail renders per recipient from their secured space (docs/integrating.md step 9).
+                    var body = WorkflowNotifications.Render(n, os, null);
+                    if (n.UserId is { } user) log.LogInformation("Notification to user {UserName} ({UserId}): {Body}", n.UserName, user, body);
+                    else log.LogInformation("Notification to role {Role}: {Body}", n.Role, body);
                     (n.State, n.Attempts) = (NotificationState.Sent, n.Attempts + 1);
                 }
                 os.CommitChanges();

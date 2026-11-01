@@ -1,6 +1,21 @@
 # Session handoff — 2026-11-01
 
-## This session (2026-10-31/11-01): user-member assignee and Notify (CARD-2615 (1)), locks before the start (CARD-2713)
+## This session (2026-11-01): mail bodies rendered per recipient (CARD-2597), reference locks (CARD-2735)
+
+- Branch `card-2597-2735` (commit hash in git log; fast-forwarded into master): a Notify stores its template
+  (`WorkflowNotification.Body`, new column `IsTemplate`: a **schema change**); hosts render it per recipient with
+  `WorkflowNotifications.Render(note, securedSpace, security)`, which masks what that recipient may not read. The
+  in-app list shows `WorkflowNotification.Text`, rendered for the viewer. A state can lock a reference member
+  (`WorkflowMembers.Lockable`; `StateLockGuard` judges its foreign key). Plan, reviews and verification:
+  `docs/plans/2026-11-01-card-2597-2735-per-recipient-mail-and-reference-locks.md`.
+- **Not released.** 0.4.0 (CARD-2615 (1), CARD-2713, CARD-2597, CARD-2735) waits for Martin's go. Then BPGDemo's
+  `DispatchWorkflowNotificationsHandler` must call `Render` per recipient inside its signed-in scope (it mails
+  `notification.Body` today, which would now be the raw template), and BPG's `SpecWorkflowChecks` resolves
+  `LockedPropertyIds` against relations too.
+- Reviews ran on Codex again (Gemini's quota out all session).
+- Tests: Engine 59, Module 217, E2E 5/5, browser smoke.
+
+## Previous session (2026-10-31/11-01): user-member assignee and Notify (CARD-2615 (1)), locks before the start (CARD-2713)
 
 - `e1c816f` (branch `card-2615-2713`, fast-forwarded into master): a Task state's role or a Notify recipient can be a
   user member of the subject, `@Buyer` (a reference to a Guid-keyed `ISecurityUser`). The task gets

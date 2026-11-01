@@ -18,6 +18,9 @@ public class OtherSubject : BaseObject, IWorkflowSubject
 {
     public virtual string Name { get; set; } = "";
     [Precision(18, 2)] public virtual decimal Amount { get; set; }
+    /// <summary>A reference with a CLR foreign key (PurchaseRequest.Buyer's is a shadow one): CARD-2735 locks judge both.</summary>
+    public virtual Guid? BuyerId { get; set; }
+    [System.ComponentModel.DataAnnotations.Schema.ForeignKey(nameof(BuyerId))] public virtual ApplicationUser? Buyer { get; set; }
     public virtual WorkflowInstance? Workflow { get; set; }
 }
 

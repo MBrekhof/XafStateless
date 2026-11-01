@@ -16,6 +16,17 @@ public static class WorkflowMembers
                     && IsScalar(m.MemberType))
         .ToList();
 
+    /// <summary>The members a state may lock: the <see cref="Supported"/> scalars plus references (CARD-2735): public, persistent,
+    /// writable, browsable members holding one persistent object, whose key this row holds (never the inverse side of a one-to-one).
+    /// A reference changes when its key does. Never <c>Workflow</c>.</summary>
+    public static IReadOnlyList<IMemberInfo> Lockable(ITypeInfo target) =>
+    [
+        .. Supported(target),
+        .. target.Members.Where(m => m.IsPublic && m.IsProperty && m.IsPersistent && !m.IsReadOnly && m.IsVisible && !m.IsKey && !m.IsList
+                                     && m.Name != nameof(IWorkflowSubject.Workflow) && m.MemberTypeInfo is { IsPersistent: true }
+                                     && m.AssociatedMemberInfo is not { IsList: false }),
+    ];
+
     /// <summary>The user members (CARD-2615): public persistent references to a Guid-keyed class implementing XAF's
     /// <see cref="ISecurityUser"/>. A Task state or a Notify addresses one as <c>@Member</c>.</summary>
     public static IReadOnlyList<IMemberInfo> Users(ITypeInfo target) => target.Members

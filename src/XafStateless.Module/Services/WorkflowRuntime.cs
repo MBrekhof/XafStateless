@@ -301,13 +301,14 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, W
                     if (toRequester) (note.UserId, note.UserName) = (instance.StartedById, instance.StartedBy);
                     else if (recipient is { } r) (note.UserId, note.UserName) = (r.Id, r.Name);
                     else note.Role = effect.Target;
-                    note.Body = Fill(x, effect.Value);
+                    // CARD-2597: the template; the host renders it per recipient (WorkflowNotifications.Render).
+                    (note.Body, note.IsTemplate) = (effect.Value ?? throw new InvalidOperationException("a notification needs a text"), true);
                     break;
                 case EffectKind.RunAction:
                     // Trusted host code inside this command (see IWorkflowAction): its writes through x.Os commit with the transition.
                     var action = catalog.Find(effect.Target)
                                  ?? throw new InvalidOperationException($"workflow action '{effect.Target}' is not registered in this application");
-                    action.Run(new WorkflowActionContext(x.Os, x.Subject, Fill(x, effect.Value ?? "")));   // no argument is ""
+                    action.Run(new WorkflowActionContext(x.Os, x.Subject, WorkflowNotifications.Fill(x.Type, x.Subject, effect.Value ?? "", null)));   // no argument is ""
                     break;
                 case EffectKind.RunRules:
                     var ruleSet = x.Def!.RuleSet(effect.Target)
@@ -357,11 +358,6 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, W
                 ?? throw new InvalidOperationException($"'{member}' is not a reference of {x.Type.Name} to the application's users");
         return m.GetValue(x.Subject) is ISecurityUser { IsActive: true } user ? ((Guid)m.MemberTypeInfo.KeyMember.GetValue(user), user.UserName) : null;
     }
-
-    /// <summary>A Notify body or an action argument: its {Member} placeholders read from the subject. A null Notify body throws, as
-    /// before (validation refuses it; only a definition that bypassed validation has one).</summary>
-    static string Fill(Cmd x, string template) => XafWorkflowEnvironment.Placeholder().Replace(template, m =>
-        Convert.ToString(x.Type.FindMember(m.Groups[1].Value)?.GetValue(x.Subject), CultureInfo.InvariantCulture) ?? "");
 
     /// <summary>A SetField or Increment write of one subject member, exempted from StateLockGuard for this member only; keyed by
     /// the EF entity type (never a proxy type), as the guard keys it.</summary>

@@ -63,8 +63,9 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
         return bad == null ? null : $"placeholder '{{{bad}}}' is not a member of {target.Name}";
     }
 
+    /// <summary>A lock (the validator's only use): a scalar or a reference (<see cref="WorkflowMembers.Lockable"/>).</summary>
     public string? CheckMember(string member) =>
-        WorkflowMembers.Supported(target).Any(m => m.Name == member) ? null : $"'{member}' is not a member of {target.Name} that a workflow may use";
+        WorkflowMembers.Lockable(target).Any(m => m.Name == member) ? null : $"'{member}' is not a member of {target.Name} that a workflow may use";
 
     public string? CheckUserMember(string member) =>
         WorkflowMembers.Users(target).Any(m => m.Name == member) ? null : $"'{member}' is not a reference of {target.Name} to the application's users";

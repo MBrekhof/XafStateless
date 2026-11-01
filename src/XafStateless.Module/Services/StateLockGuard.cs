@@ -16,7 +16,8 @@ namespace XafStateless.Module.Services;
 /// <list type="bullet">
 /// <item>A Modified <see cref="IWorkflowSubject"/> may not change a member locked in its instance's <b>persisted</b> state:
 /// the subject's Workflow link, the instance's StateKey and the state's locks are all read from the database at SavingChanges
-/// (<see cref="RawSql"/>: same connection and transaction, never rewritten by XAF security), never from tracked values.</item>
+/// (<see cref="RawSql"/>: same connection and transaction, never rewritten by XAF security), never from tracked values.
+/// A locked reference is judged by its foreign-key column (CARD-2735).</item>
 /// <item>A subject without a persisted Workflow link (Added, or not started) is locked as if in the initial state of its
 /// workflow (CARD-2713): the members the initial states of the Published definitions for its type lock (union). A Modified
 /// one is judged against the database as above; an Added one against what a new object of its type starts with
@@ -113,8 +114,8 @@ public sealed class StateLockGuard : SaveChangesInterceptor
                     || !locks.TryGetValue((def, instance.StateKey), out var state))
                     continue;
                 foreach (var member in state.Members)
-                    if (e.Metadata.FindProperty(member) != null && e.Property(member).IsModified && scope?.IsAllowed(type, id, member) != true)
-                        candidates.Add((e, member, $"'{member}' is locked in state '{state.Caption}'"));
+                    if (Column(e.Metadata, member) is { } column && e.Property(column.Name).IsModified && scope?.IsAllowed(type, id, member) != true)
+                        candidates.Add((e, column.Name, $"'{member}' is locked in state '{state.Caption}'"));
             }
         }
 
@@ -127,14 +128,15 @@ public sealed class StateLockGuard : SaveChangesInterceptor
                 var (type, id) = Key(e);
                 foreach (var member in initialLocks[type])
                 {
-                    if (e.Metadata.FindProperty(member) is not { PropertyInfo: { } clr } property || scope?.IsAllowed(type, id, member) == true) continue;
+                    if (Column(e.Metadata, member) is not { } column || scope?.IsAllowed(type, id, member) == true) continue;
                     var refusal = $"'{member}' is locked until its workflow starts";
                     if (e.State == EntityState.Modified)
                     {
-                        if (e.Property(member).IsModified) candidates.Add((e, member, refusal));
+                        if (e.Property(column.Name).IsModified) candidates.Add((e, column.Name, refusal));
                     }
                     // A new subject has no row: its value must be the one a new object of its type starts with.
-                    else if (!Same(e.Property(member), Provider(property, clr.GetValue(baselines.TryGetValue(type, out var b) ? b : baselines[type] = Baseline(type)))))
+                    else if (!Same(e.Property(column.Name), Provider(column, BaselineValue(e.Metadata, member, column,
+                                 baselines.TryGetValue(type, out var b) ? b : baselines[type] = Baseline(type)))))
                         throw new UserFriendlyException(refusal);
                 }
             }
@@ -218,6 +220,22 @@ public sealed class StateLockGuard : SaveChangesInterceptor
         try { (fresh as IXafEntityObject)?.OnCreated(); }
         catch (Exception) { fresh = Activator.CreateInstance(type)!; }
         return fresh;
+    }
+
+    /// <summary>The column a locked member is judged by: its property, or for a reference the single foreign-key property this
+    /// row holds (CARD-2735; often a shadow property). Null when neither: nothing on this row to judge.</summary>
+    static Microsoft.EntityFrameworkCore.Metadata.IProperty? Column(Microsoft.EntityFrameworkCore.Metadata.IEntityType type, string member) =>
+        type.FindProperty(member)
+        ?? (type.FindNavigation(member) is { IsOnDependent: true, ForeignKey.Properties: [var key] } ? key : null);
+
+    /// <summary>The value <paramref name="baseline"/> starts <paramref name="column"/> with: its CLR getter, or, for a shadow
+    /// foreign key, the key of the object the baseline's navigation holds (null when it holds none).</summary>
+    static object? BaselineValue(Microsoft.EntityFrameworkCore.Metadata.IEntityType type, string member,
+        Microsoft.EntityFrameworkCore.Metadata.IProperty column, object baseline)
+    {
+        if (column.PropertyInfo is { } clr) return clr.GetValue(baseline);
+        return type.FindNavigation(member) is { } navigation && navigation.PropertyInfo?.GetValue(baseline) is { } target
+            ? navigation.ForeignKey.PrincipalKey.Properties[0].PropertyInfo?.GetValue(target) : null;
     }
 
     /// <summary>A subject entry's identity across subject types: its CLR type and ID.</summary>

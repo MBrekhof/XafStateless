@@ -89,7 +89,8 @@ public class RequesterNotificationTests : IClassFixture<TestDb>
         Assert.Equal(("ordered", AliceId, "alice"), (inst.StateKey, inst.StartedById, inst.StartedBy));
         var notes = Notes(inst.ID);
         Assert.Equal(3, notes.Count);
-        var toAlice = notes.Where(n => n.UserId == AliceId).Select(n => (n.Body, n.Role, n.UserName)).ToList();
+        using var os = db.NewObjectSpace();
+        var toAlice = notes.Where(n => n.UserId == AliceId).Select(n => (WorkflowNotifications.Render(n, os, null), n.Role, n.UserName)).ToList();
         Assert.Equal([("Ordered: Desk", "", "alice"), ("Started: Desk", "", "alice")], toAlice);
         Assert.Single(notes, n => n.Role == "Approvers" && n.UserId == null);   // role addressing is unchanged
     }
@@ -134,6 +135,7 @@ public class RequesterNotificationTests : IClassFixture<TestDb>
         foreach (var change in new Action<WorkflowNotification>[]
                  {
                      n => n.UserId = BobId, n => n.UserName = "bob", n => n.Role = "Approvers", n => n.Body = "changed",
+                     n => n.IsTemplate = false,   // CARD-2597: a cleared flag would mail the raw template
                  })
         {
             using var os = db.NewObjectSpace();
