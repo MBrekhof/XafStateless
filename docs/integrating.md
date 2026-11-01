@@ -4,7 +4,7 @@ This guide covers adding XafStateless to an existing XAF Blazor application on E
 (`demo/`) does, and the file that does it is named at each step. When in doubt, copy the demo.
 
 The host needs:
-- DevExpress XAF **26.1.4** (Blazor, EF Core, Security with `PermissionPolicyRole` roles);
+- DevExpress XAF **26.1.6** (Blazor, EF Core, Security with `PermissionPolicyRole` roles);
 - EF Core **10.0.10** on **SQL Server**;
 - .NET 10.
 
@@ -16,7 +16,7 @@ The host needs:
 | The Blazor server project | `XafStateless.Blazor` (brings the Module in) |
 
 The packages are on the private GitHub Packages feed `https://nuget.pkg.github.com/MBrekhof/index.json` (add it to the
-host's `nuget.config` with a token that can read packages). They accept DevExpress 26.1.4 and any later 26.1 patch, never
+host's `nuget.config` with a token that can read packages). They accept DevExpress 26.1.6 (0.5.0 on; 0.4.x accepted 26.1.4) and any later 26.1 patch, never
 26.2. The Module references EF Core InMemory, Proxies and Relational 10.0.10 on purpose: DevExpress's EF Core package
 only asks for 8.0.28 or higher, and these keep the host's whole EF Core family on 10.0.10. This repository's demo and
 tests use `ProjectReference`s to the same projects.

@@ -360,21 +360,28 @@ public class DesignerJourneyTests : PageTest
         // on a timeout, close it and retry once with a fresh one.
         for (var attempt = 1; ; attempt++)
         {
+            var timeout = attempt == 1 ? 5000 : S.TimeoutMs;
             await box.ClickAsync();
-            await p.Keyboard.PressAsync("Alt+ArrowDown");
-            var list = await box.GetAttributeAsync("aria-controls");
+            await box.PressAsync("Alt+ArrowDown");
             try
             {
+                // DevExpress 26.1.6 sets aria-controls only once the dropdown has opened (26.1.4 always had it): wait for the
+                // open dropdown, then read it.
+                await Expect(box).ToHaveAttributeAsync("aria-expanded", "true", new() { Timeout = timeout });
+                await Expect(box).ToHaveAttributeAsync("aria-controls", new Regex(".+"), new() { Timeout = timeout });
+                var list = await box.GetAttributeAsync("aria-controls");
                 await p.Locator($"[id='{list}']").GetByRole(AriaRole.Option, new() { Name = option, Exact = true })
-                    .ClickAsync(new() { Timeout = attempt == 1 ? 5000 : S.TimeoutMs });
+                    .ClickAsync(new() { Timeout = timeout });
+                await Expect(box).ToHaveValueAsync(option, new() { Timeout = timeout });
                 break;
             }
-            catch (TimeoutException) when (attempt == 1)
+            // A click times out with System.TimeoutException, a Playwright assertion with PlaywrightException.
+            catch (Exception e) when (attempt == 1 && e is TimeoutException or PlaywrightException)
             {
                 await p.Keyboard.PressAsync("Escape");
+                await Expect(box).ToHaveAttributeAsync("aria-expanded", "false");
             }
         }
-        await Expect(box).ToHaveValueAsync(option);
     }
 
     /// <summary>Close a tab that has nothing left to save; focus returns to the owning definition.</summary>

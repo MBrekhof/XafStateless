@@ -95,7 +95,7 @@ Host trial: the module was added to a second XAF host (its own job framework, Ha
 
 ## How to run
 
-Requirements: Windows, the .NET 10 SDK, SQL Server LocalDB (`(localdb)\mssqllocaldb`), and DevExpress 26.1.4 packages
+Requirements: Windows, the .NET 10 SDK, SQL Server LocalDB (`(localdb)\mssqllocaldb`), and DevExpress 26.1.6 packages
 on the NuGet feed.
 
 From the repository root, in PowerShell:
