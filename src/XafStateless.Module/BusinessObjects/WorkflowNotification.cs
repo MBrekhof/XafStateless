@@ -16,8 +16,9 @@ public class WorkflowNotification : BaseObject
     [VisibleInListView(false), VisibleInDetailView(false), VisibleInLookupListView(false)]   // a key; UserName is what people read
     public virtual Guid? UserId { get; set; }
     public virtual string? UserName { get; set; }
-    /// <summary>The Notify text with its {Member} placeholders (<see cref="IsTemplate"/>); a host renders it per recipient with
-    /// <see cref="Services.WorkflowNotifications.Render"/>. Views show <see cref="Text"/>.</summary>
+    /// <summary>The Notify text with its {Member} placeholders (<see cref="IsTemplate"/>); their values at notify time are in the
+    /// shadow column <see cref="Services.WorkflowNotifications.SnapshotColumn"/> (CARD-2788). A host renders it per recipient
+    /// with <see cref="Services.WorkflowNotifications.Render"/>. Views show <see cref="Text"/>.</summary>
     [VisibleInListView(false), VisibleInDetailView(false), VisibleInLookupListView(false)]
     public virtual string Body { get; set; } = "";
 

@@ -81,7 +81,7 @@ In `OnModelCreating`:
 ```csharp
 modelBuilder.UseDeferredDeletion(this);    // REQUIRED (maps GCRecord)
 modelBuilder.UseOptimisticLock();          // REQUIRED
-modelBuilder.ConfigureXafStateless();      // unique indexes, key lengths
+modelBuilder.ConfigureXafStateless();      // unique indexes, key lengths, the notification snapshot column
 ```
 
 **`UseOptimisticLock()` is required.** The module has no concurrency tokens of its own. Every workflow command touches
@@ -422,8 +422,15 @@ members as `@Member` (step 7). Each reads the user the member holds when the sta
   while the task is open does not move it; the next task the workflow opens reads the new value. Users read their tasks
   through `[UserId] = CurrentUserId()` (`GrantParticipant` adds it; `GrantAssigneeRows` on its own, step 6).
 
-A notification's recipient, `Body`, `IsTemplate`, `Instance` and `CreatedUtc` are fixed once written; delivery may
-change `State`, `Attempts` and `LastError`.
+A notification's recipient, `Body`, `IsTemplate`, its snapshot, `Instance` and `CreatedUtc` are fixed once written;
+delivery may change `State`, `Attempts` and `LastError`.
+
+**The snapshot** (CARD-2788, 0.5.0): when the runtime writes a notification it also stores each placeholder's value at
+that moment, and the records it read, in the column `Snapshot` (`nvarchar(max) NULL`) of the notifications table. It is
+an EF shadow property declared by `ConfigureXafStateless()` (step 3), not a member of `WorkflowNotification`: it holds
+values a recipient may not be allowed to read, so no view, criteria, permission or Web API reaches it. **Schema change**
+for a host upgrading from 0.4.x: add the column (nullable; existing rows stay `NULL` and keep rendering live). A host
+whose model lacks it writes no snapshot.
 
 The host delivers the rows. Read the `Pending` rows through a non-secured object space, deliver each one (resolve the
 role, or the user by `UserId`, to addresses however the host does that; a user that no longer exists is a failed
@@ -432,17 +439,22 @@ delivery), then set `State` to `Sent`, or to `Failed` with `LastError`, and incr
 **Render the text per recipient** (CARD-2597): `WorkflowNotifications.Render(note, space, security)`, once for every
 recipient, with a scope signed in as that recipient: its secured object space and its `ISecurityStrategyBase` (as
 `IRequestSecurityStrategy`). The note may come from the dispatcher's non-secured space: only its subject's type and key
-are read, and the subject is loaded in `space`. Each placeholder shows what that recipient may read, as the app shows it
-to them:
+are read, and the subject is loaded in `space`. Each placeholder shows its value **at notify time** (a later change, such
+as a rejection reason cleared on resubmit, does not rewrite the notice), and the permission checks run now, for that
+recipient, on the records the placeholder read then (loaded again by key through a secured query):
 - a member they may not read (member deny, or a reference to a type they may not read): `*******`
   (`WorkflowNotifications.Masked`);
-- a reference whose object their criteria hide: empty, as their views show it (the secured space returns it as null);
-- the whole subject unreadable, or not found: every placeholder `*******`.
+- a reference to a record their criteria hide, or one deleted since: `*******`, with or without
+  `PreFetchReferenceProperties()`;
+- the whole subject unreadable, or not found: every placeholder `*******`;
+- a reference empty at notify time: empty.
 
-Values are those at render time, not at state entry. A role notification is rendered once per user of the role, never
-once per row: a text rendered for one user may hold what another may not read. `security: null` fills everything
-(for a log, never for mail). A row written before 0.4.0 (`IsTemplate` false) holds the text filled then and is returned
-as stored. The demo's `LogNotificationDispatcher` (`XafStateless.Demo.Blazor.Server/`) logs each row with
+Checks judge the records as they are now: with `PreFetchReferenceProperties()`, a reference reassigned since to a record
+the recipient may not read can mask the old value even if they could read that one (it never shows a hidden value). A
+role notification is rendered once per user of the role, never once per row: a text rendered for one user may hold what
+another may not read. `security: null` fills everything in a non-secured space (for a log, never for mail) and masks
+everything in a secured one. A row written by 0.4.x (no snapshot) is filled from the subject as it is at render time; a
+row written before 0.4.0 (`IsTemplate` false) holds the text filled then and is returned as stored. The demo's `LogNotificationDispatcher` (`XafStateless.Demo.Blazor.Server/`) logs each row with
 `security: null` and marks it Sent every 30 seconds. It has the same shape as the timer: a `BackgroundService` with a
 scope per tick.
 

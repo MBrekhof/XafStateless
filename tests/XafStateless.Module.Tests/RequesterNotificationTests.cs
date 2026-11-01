@@ -1,4 +1,5 @@
 using DevExpress.ExpressApp;
+using DevExpress.ExpressApp.EFCore;
 using DevExpress.Persistent.BaseImpl.EF.PermissionPolicy;
 using XafStateless.Demo.Module.BusinessObjects;
 using XafStateless.Engine;
@@ -136,6 +137,8 @@ public class RequesterNotificationTests : IClassFixture<TestDb>
                  {
                      n => n.UserId = BobId, n => n.UserName = "bob", n => n.Role = "Approvers", n => n.Body = "changed",
                      n => n.IsTemplate = false,   // CARD-2597: a cleared flag would mail the raw template
+                     n => ((EFCoreObjectSpace)((IObjectSpaceLink)n).ObjectSpace).DbContext.Entry(n)   // CARD-2788: the values of the notice
+                         .Property(WorkflowNotifications.SnapshotColumn).CurrentValue = "{}",
                  })
         {
             using var os = db.NewObjectSpace();

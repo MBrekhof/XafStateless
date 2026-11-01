@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using XafStateless.Module.BusinessObjects;
+using XafStateless.Module.Services;
 
 namespace XafStateless.Module;
 
@@ -33,6 +34,8 @@ public static class ModelBuilderExtensions
             b.HasIndex(t => new { t.Role, t.State });
             b.HasIndex(t => new { t.UserId, t.State });   // the task list's "assigned to me" (CARD-2615)
         });
+        // A notification's values at notify time (CARD-2788): a shadow property, so it never becomes an XAF member.
+        mb.Entity<WorkflowNotification>(b => b.Property<string?>(WorkflowNotifications.SnapshotColumn));
         return mb;
     }
 }

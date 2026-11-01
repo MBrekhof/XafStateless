@@ -303,12 +303,16 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, W
                     else note.Role = effect.Target;
                     // CARD-2597: the template; the host renders it per recipient (WorkflowNotifications.Render).
                     (note.Body, note.IsTemplate) = (effect.Value ?? throw new InvalidOperationException("a notification needs a text"), true);
+                    // CARD-2788: and the values of this moment (a later SetField or a resubmit does not rewrite the notice).
+                    if (x.Os is EFCoreObjectSpace { DbContext: var ctx } && WorkflowNotifications.HasSnapshot(ctx))
+                        ctx.Entry(note).Property(WorkflowNotifications.SnapshotColumn).CurrentValue =
+                            WorkflowNotifications.Snapshot(x.Os, x.Type, x.Subject, note.Body);
                     break;
                 case EffectKind.RunAction:
                     // Trusted host code inside this command (see IWorkflowAction): its writes through x.Os commit with the transition.
                     var action = catalog.Find(effect.Target)
                                  ?? throw new InvalidOperationException($"workflow action '{effect.Target}' is not registered in this application");
-                    action.Run(new WorkflowActionContext(x.Os, x.Subject, WorkflowNotifications.Fill(x.Type, x.Subject, effect.Value ?? "", null)));   // no argument is ""
+                    action.Run(new WorkflowActionContext(x.Os, x.Subject, WorkflowNotifications.Fill(x.Os, x.Type, x.Subject, effect.Value ?? "")));   // no argument is ""
                     break;
                 case EffectKind.RunRules:
                     var ruleSet = x.Def!.RuleSet(effect.Target)
