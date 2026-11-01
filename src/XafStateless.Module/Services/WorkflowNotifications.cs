@@ -5,7 +5,6 @@ using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.DC;
 using DevExpress.ExpressApp.EFCore;
 using DevExpress.ExpressApp.Security;
-using DevExpress.Persistent.BaseImpl.EF;
 using Microsoft.EntityFrameworkCore;
 using XafStateless.Module.BusinessObjects;
 
@@ -19,47 +18,56 @@ public static class WorkflowNotifications
     /// <summary>What a placeholder the recipient may not read renders as.</summary>
     public const string Masked = "*******";
 
-    /// <summary>The shadow column (EF property without a CLR member, declared by <c>ConfigureXafStateless</c>) holding each
-    /// placeholder's text at notify time and the records it read. It holds unmasked values: being no CLR member it is no XAF
-    /// member, so no view, criteria, permission or Web API reaches it; only <see cref="RawSql"/> reads it.</summary>
+    /// <summary>The notification's shadow column (an EF property without a CLR member, declared by <c>ConfigureXafStateless</c>)
+    /// holding its placeholders' texts at notify time and the records they read, unmasked. Being no CLR member it is no XAF
+    /// member: no view, criteria, permission or Web API reaches it. The runtime writes it, <see cref="Render"/> reads it with
+    /// plain SQL. Not for Middle Tier hosts: XAF's Middle Tier copies shadow properties into the client payload.</summary>
     public const string SnapshotColumn = "Snapshot";
 
+    /// <summary>One placeholder at notify time. <see cref="Live"/>: a value the security system cannot judge from its reads
+    /// (a calculated member, a reference without a stored default member); it is filled at render time instead.</summary>
+    internal sealed record Entry(string Text, List<Read> Reads, bool Live = false);
     internal sealed record Read(string Type, string Key, string? Member);
-    internal sealed record Entry(string Text, List<Read> Reads);
 
     /// <summary>
     /// The body of <paramref name="note"/> as <paramref name="security"/>'s user may read it. Each <c>{Member}</c> or
     /// <c>{Reference.Member}</c> shows its value at notify time; it renders <see cref="Masked"/> when the user may not read
-    /// the subject (loaded by key in <paramref name="space"/>), a record the placeholder read (loaded again by its key: one
-    /// deleted or hidden by their criteria masks), a member on the way, or a reference's default member.
-    /// <paramref name="note"/> may come from another (non-secured) space. <paramref name="security"/> null renders
-    /// everything in a non-secured space (for a log, never for a mail) and masks everything in a secured one. A row written before 0.4.0 holds filled text and is returned as stored; a
-    /// 0.4.0 row (no snapshot) is filled from the subject as it is now.
+    /// the subject (loaded by key in <paramref name="space"/>), a record the placeholder read (loaded again by key: one
+    /// deleted or hidden by their criteria masks), a member on the way, or a reference's default member. A calculated
+    /// member is filled from the subject as it is now, as the user's space shows it. <paramref name="space"/> must be an EF
+    /// Core object space (anything else masks every placeholder). <paramref name="note"/> may come from another
+    /// (non-secured) space. <paramref name="security"/> null renders everything in a non-secured space (for a log, never
+    /// for a mail) and masks everything in a secured one. A row written before 0.4.0 holds filled text and is returned as
+    /// stored; a 0.4.x row (no snapshot) is filled from the subject as it is now.
     /// </summary>
     public static string Render(WorkflowNotification note, IObjectSpace space, IRequestSecurityStrategy? security)
     {
         if (!note.IsTemplate) return note.Body;
         var placeholders = XafWorkflowEnvironment.Placeholder();
-        // A secured space without its strategy cannot judge anything, and the snapshot is unmasked (as WorkflowCaller refuses one).
-        if ((security == null && space is ISecuredObjectSpace) || !TryReadSnapshot(note, space, out var snapshot))
-            return placeholders.Replace(note.Body, Masked);
-        if (snapshot != null && security == null)
-            return placeholders.Replace(note.Body, m => snapshot.TryGetValue(m.Groups[1].Value, out var e) ? e.Text : Masked);
+        string AllMasked() => placeholders.Replace(note.Body, Masked);
+        // A secured space without its strategy can judge nothing, and the snapshot is unmasked (WorkflowCaller refuses one too).
+        // A composite or non-persistent space: not one this can read the snapshot or judge records in.
+        if (space is not EFCoreObjectSpace { DbContext: var ctx } || (security == null && space is ISecuredObjectSpace)) return AllMasked();
+        if (!TryReadSnapshot(ctx, note, out var snapshot)) return AllMasked();
 
         var loaded = new Dictionary<(Type, object), object?>();
         var (typeName, key) = note.Instance is { } i ? (i.SubjectType, i.SubjectId) : ("", Guid.Empty);
         var type = space.TypesInfo.FindTypeInfo(typeName);
-        var subject = type is { IsPersistent: true } && space.IsKnownType(type.Type) ? Load(space, type, key, loaded) : null;
-        if (subject == null) return placeholders.Replace(note.Body, Masked);
+        var subject = type is { IsPersistent: true, KeyMember.MemberType: var kt } && kt == typeof(Guid) && space.IsKnownType(type.Type)
+            ? Load(space, type, key, loaded) : null;
+        if (subject == null) return AllMasked();
 
-        if (snapshot == null)   // a 0.4.0 row: the values now
-            return placeholders.Replace(note.Body, m =>
-            {
-                var (text, reads) = Walk(space.TypesInfo, type!, subject, m.Groups[1].Value);
-                return security == null || reads.All(r => security.CanRead(space, r.Owner, r.Member)) ? text : Masked;
-            });
         return placeholders.Replace(note.Body, m =>
-            snapshot.TryGetValue(m.Groups[1].Value, out var e) && e.Reads.All(r => MayRead(space, security!, r, loaded)) ? e.Text : Masked);
+        {
+            var name = m.Groups[1].Value;
+            if (snapshot != null)
+            {
+                if (!snapshot.TryGetValue(name, out var e)) return Masked;
+                if (!e.Live) return security == null || e.Reads.All(r => MayRead(space, security, r, loaded)) ? e.Text : Masked;
+            }
+            var (text, reads, _) = Walk(space.TypesInfo, type!, subject, name);   // a 0.4.x row, or a Live placeholder: now
+            return security == null || reads.All(r => security.CanRead(space, r.Owner, r.Member)) ? text : Masked;
+        });
     }
 
     /// <summary><paramref name="template"/> filled from <paramref name="subject"/>, unsecured (a Run action's argument).</summary>
@@ -73,9 +81,11 @@ public static class WorkflowNotifications
         var entries = new Dictionary<string, Entry>();
         foreach (var name in XafWorkflowEnvironment.Placeholder().Matches(template).Select(m => m.Groups[1].Value).Distinct())
         {
-            var (text, reads) = Walk(os.TypesInfo, type, subject, name);
-            entries[name] = new(text, reads.Select(r => new Read(os.TypesInfo.FindTypeInfo(r.Owner.GetType()).FullName,
-                Convert.ToString(os.GetKeyValue(r.Owner), CultureInfo.InvariantCulture) ?? "", r.Member)).ToList());
+            var (text, reads, judged) = Walk(os.TypesInfo, type, subject, name);
+            entries[name] = judged
+                ? new(text, reads.Select(r => new Read(os.TypesInfo.FindTypeInfo(r.Owner.GetType()).FullName,
+                    Convert.ToString(os.GetKeyValue(r.Owner), CultureInfo.InvariantCulture) ?? "", r.Member)).ToList())
+                : new("", [], Live: true);
         }
         return JsonSerializer.Serialize(entries);
     }
@@ -85,38 +95,53 @@ public static class WorkflowNotifications
         ctx.Model.FindEntityType(typeof(WorkflowNotification))?.FindProperty(SnapshotColumn) != null;
 
     /// <summary>
-    /// One placeholder read from <paramref name="subject"/>: its text and every (record, member) it read, a null member
-    /// being the record itself. A null hop, or a hop declared on a subtype the value is not, renders "" (an unknown member
-    /// too: validation refuses one). A value of a non-persistent type (<c>{Title.Length}</c>) is read without a check: its
-    /// owner's member was. A record shows as its runtime type's default member (<c>BaseObject.ToString</c>); FindTypeInfo
-    /// unwraps EF proxies.
+    /// One placeholder read from <paramref name="subject"/>: its text, every (record, member) it read (a null member is the
+    /// record itself), and whether those reads judge the text. A null hop, or a hop declared on a subtype the value is not,
+    /// renders "" (an unknown member too: validation refuses one). A value of a non-persistent type (<c>{Title.Length}</c>)
+    /// is read without a check: its owner's member was. A record shows as its runtime type's default member (FindTypeInfo
+    /// unwraps EF proxies). Not judged: a calculated member on a record (its getter may read members no check names), or a
+    /// record whose default member is not a stored scalar (then it shows as its ToString, as 0.4 did).
     /// </summary>
-    static (string Text, List<(object Owner, string? Member)> Reads) Walk(ITypesInfo types, ITypeInfo type, object subject, string path)
+    static (string Text, List<(object Owner, string? Member)> Reads, bool Judged) Walk(ITypesInfo types, ITypeInfo type, object subject, string path)
     {
-        var reads = new List<(object, string?)>();
-        if (type.FindMember(path) is not { } member) return ("", reads);
+        var (reads, judged) = (new List<(object, string?)>(), true);
+        if (type.FindMember(path) is not { } member) return ("", reads, true);
         object? value = subject;
         foreach (var hop in member.GetPath())
         {
-            if (value == null || !hop.Owner.Type.IsInstanceOfType(value)) return ("", reads);
-            if (types.FindTypeInfo(value.GetType()) is { IsPersistent: true }) reads.Add((value, hop.Name));
+            if (value == null || !hop.Owner.Type.IsInstanceOfType(value)) return ("", reads, judged);
+            if (types.FindTypeInfo(value.GetType()) is { IsPersistent: true })
+            {
+                reads.Add((value, hop.Name));
+                judged &= hop.IsPersistent;
+            }
             value = hop.GetValue(value);
         }
-        if (value != null && types.FindTypeInfo(value.GetType()) is { IsPersistent: true } target) reads.Add((value, target.DefaultMember?.Name));
-        return (Convert.ToString(value, CultureInfo.InvariantCulture) ?? "", reads);
+        if (value != null && types.FindTypeInfo(value.GetType()) is { IsPersistent: true } target)
+        {
+            var shown = target.DefaultMember;
+            reads.Add((value, shown?.Name));
+            if (shown is { IsPersistent: true, MemberTypeInfo.IsPersistent: false })
+                return (Convert.ToString(shown.GetValue(value), CultureInfo.InvariantCulture) ?? "", reads, judged);
+            judged = false;
+        }
+        return (Convert.ToString(value, CultureInfo.InvariantCulture) ?? "", reads, judged);
     }
 
-    /// <summary>The note's snapshot, read with plain SQL through <paramref name="space"/>'s context: null when it has none (a
-    /// 0.4.0 row, a host without the column, an unsaved row). False when it cannot be read as one: every placeholder masks.</summary>
-    static bool TryReadSnapshot(WorkflowNotification note, IObjectSpace space, out Dictionary<string, Entry>? snapshot)
+    /// <summary>The note's snapshot, read with plain SQL: null when it has none (a 0.4.x row, a host without the column).
+    /// False when there is no such row (deleted, unsaved) or the snapshot cannot be read as one (damaged JSON, a missing text
+    /// or key): every placeholder masks.</summary>
+    static bool TryReadSnapshot(DbContext ctx, WorkflowNotification note, out Dictionary<string, Entry>? snapshot)
     {
         snapshot = null;
-        if (space is not EFCoreObjectSpace { DbContext: var ctx } || !HasSnapshot(ctx)) return true;
-        if (RawSql.Rows<WorkflowNotification>(ctx, nameof(BaseObject.ID), [note.ID], SnapshotColumn).FirstOrDefault()?[0] is not string json)
-            return true;
+        if (!HasSnapshot(ctx)) return true;
+        var rows = RawSql.Rows<WorkflowNotification>(ctx, nameof(WorkflowNotification.ID), [note.ID], SnapshotColumn);
+        if (rows.Count == 0) return false;
+        if (rows[0][0] is not string json) return true;
         try { snapshot = JsonSerializer.Deserialize<Dictionary<string, Entry>>(json); }
-        catch (JsonException) { }
-        return snapshot != null;
+        catch (JsonException) { return false; }
+        // System.Text.Json does not enforce the records' non-null parameters.
+        return snapshot != null && snapshot.Values.All(e => e is { Text: not null, Reads: not null } && e.Reads.All(r => r is { Type: not null, Key: not null }));
     }
 
     static bool MayRead(IObjectSpace space, IRequestSecurityStrategy security, Read read, Dictionary<(Type, object), object?> loaded) =>
@@ -131,7 +156,11 @@ public static class WorkflowNotifications
     static object? Load(IObjectSpace space, ITypeInfo type, object key, Dictionary<(Type, object), object?> loaded)
     {
         if (!loaded.TryGetValue((type.Type, key), out var record))
-            loaded[(type.Type, key)] = record = space.GetObjects(type.Type, new BinaryOperator(type.KeyMember.Name, key)).Cast<object>().FirstOrDefault();
+        {
+            var list = space.GetObjects(type.Type, new BinaryOperator(type.KeyMember.Name, key));
+            using (list as IDisposable)   // an EFCoreCollection subscribes to the space's ObjectChanged until disposed
+                loaded[(type.Type, key)] = record = list.Cast<object>().FirstOrDefault();
+        }
         return record;
     }
 

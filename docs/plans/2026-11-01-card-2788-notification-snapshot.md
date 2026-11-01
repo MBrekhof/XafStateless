@@ -110,6 +110,37 @@ The design above was revised; the implemented design is the "Revised design" sec
   each read's record by secured query by key (cached per call), masked when not found, unparsable or `CanRead` false.
 - `DefinitionGuard`: `Snapshot` joins the fixed columns when the model has it.
 
+## Diff review (Gemini, on 881842f) and how each finding was settled
+
+The findings fall into one family: what the replay can and cannot judge. Leaks (1, 2, 4) were chased; the rest fail late
+(3, 6, 7, 8, 9) and got one guard each or a card.
+
+1. **Critical, accepted.** A calculated member, or a reference shown by ToString, was snapshotted unsecured while only the
+   outer member was checked. Umbrella: snapshot only what a permission check can judge (stored members; a reference's
+   stored scalar default member, whose value is now the text instead of ToString). Anything else is an entry marked
+   `Live`: filled at render time in the recipient's space, as 0.4 did. Demo `PurchaseRequest.Summary` ([NotMapped],
+   hidden) tests it. A reference whose default member is calculated or a reference: same rule, untested (no such type in
+   the demo model; the mutation survives).
+2. **Major, partly.** The shadow value is loaded into a secured DbContext (reachable only by host code through
+   `EF.Property`, which is trusted) and XAF's Middle Tier copies shadow properties into the client payload. Gemini's
+   shared-type entity was tried and dropped: XAF needs change-tracking-proxy-capable bags (Dictionary fails at model build)
+   and `EFCoreExportedTypeHelper` exports every entity type's CLR type, so a custom bag class would become an XAF type.
+   Kept the column; integrating.md says Middle Tier hosts are not supported. **Decision for Martin** (handoff).
+3. **Major, accepted.** Null-filled JSON is validated (any null text, reads, type or key masks every placeholder); the
+   subject type must have a Guid key.
+4. **Major, accepted.** Render needs an EF Core object space; anything else (composite, non-persistent) masks every
+   placeholder.
+5. **Major, partly.** (1) The list-text test cannot give the secured test space a ServiceProvider; the real path (strategy
+   from the space's ServiceProvider) is covered by the E2E, checked by a mutation run. (2) The query probe asserts an
+   exception. (3) Both reassignment directions added, with and without prefetch.
+6. **Minor, accepted.** The EFCoreCollection is disposed.
+7. **Minor, carded.** An IDENTITY-keyed record created in the same command records a temporary key and masks (fails
+   closed).
+8. **Minor, accepted.** A notification deleted since it was loaded masks every placeholder.
+9. **Minor, accepted, wider than reported.** The guard judges only the columns a save writes: an attached untracked row
+   carries null shadow values (the snapshot and the instance key), and neither Attach nor Update writes them (verified:
+   EF leaves unknown shadow values unmodified). Tested both.
+
 ## Not in scope
 
 The release (0.5.0 to the private feed) waits for Martin's go; BPG then bumps and adds its E2E check.

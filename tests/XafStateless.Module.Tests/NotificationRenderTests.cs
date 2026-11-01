@@ -48,12 +48,18 @@ public class NotificationRenderTests : IClassFixture<TestDb>
             Role(os, "OneUser",r => r.AddObjectPermission<ApplicationUser>(SecurityOperations.Read, "[UserName] = 'someone-else'", SecurityPermissionState.Allow));
             Role(os, "OtherTitles", null, "[Title] = 'Lamp'");
             Role(os, "Nothing", null, subject: false);
-            var b = os.CreateObject<ApplicationUser>();
-            (b.UserName, b.IsActive) = ("mail-buyer", true);
+            foreach (var name in new[] { "mail-buyer", "someone-else" })
+            {
+                var b = os.CreateObject<ApplicationUser>();
+                (b.UserName, b.IsActive) = (name, true);
+            }
             os.CommitChanges();
         }
         buyer = os.FirstOrDefault<ApplicationUser>(u => u.UserName == "mail-buyer")!.ID;
+        someoneElse = os.FirstOrDefault<ApplicationUser>(u => u.UserName == "someone-else")!.ID;
     }
+
+    readonly Guid someoneElse;   // the one user OneUser may read
 
     /// <summary>A role and its one user (named as the role): Read on PurchaseRequest (all, by <paramref name="criteria"/>, or
     /// none), plus <paramref name="grant"/>.</summary>
@@ -137,7 +143,7 @@ public class NotificationRenderTests : IClassFixture<TestDb>
         os.CommitChanges();   // the initial state locks nothing
     }
 
-    /// <summary>Sets the snapshot column outside EF (the guard refuses it through EF): a 0.4.0 row, or a damaged one.</summary>
+    /// <summary>Sets the snapshot column outside EF (the guard refuses it through EF): a 0.4.x row (null), or a damaged one.</summary>
     void SetSnapshot(Guid noteId, string? json)
     {
         using var ctx = db.NewDbContext();
@@ -280,7 +286,9 @@ public class NotificationRenderTests : IClassFixture<TestDb>
         Assert.Equal($"T=Chair A={M} B={M} U={M}", RenderFor(id, "NoAmount"));
     }
 
-    [Theory, InlineData("{"), InlineData(""), InlineData("[]"), InlineData("{}")]   // {}: no entry for any placeholder
+    [Theory, InlineData("{"), InlineData(""), InlineData("[]"), InlineData("{}"),   // {}: no entry for any placeholder
+     InlineData("""{"Title":null}"""), InlineData("""{"Title":{}}"""), InlineData("""{"Title":{"Text":"x","Reads":[null]}}"""),
+     InlineData("""{"Title":{"Text":"x","Reads":[{"Type":"XafStateless.Demo.Module.BusinessObjects.PurchaseRequest","Key":null}]}}""")]
     public void A_damaged_snapshot_masks_every_placeholder(string json)
     {
         var id = Notified();
@@ -289,19 +297,70 @@ public class NotificationRenderTests : IClassFixture<TestDb>
         Assert.Equal($"T={M} A={M} B={M} U={M}", RenderFor(id, "UserReaders"));
     }
 
-    /// <summary>The snapshot holds unmasked values: it is a shadow column, no XAF member, so no view, criteria, Web API or
-    /// generic tool reaches it through a participant's secured space.</summary>
+    /// <summary>The snapshot holds unmasked values: a shadow column, no XAF member, so no view, criteria, permission or Web API
+    /// reaches it through a participant's secured space (Middle Tier would; integrating.md says so).</summary>
     [Fact] public void The_snapshot_is_no_member_a_participant_can_query()
     {
         var id = Notified();
         Assert.Null(XafTypesInfo.Instance.FindTypeInfo(typeof(WorkflowNotification)).FindMember(WorkflowNotifications.SnapshotColumn));
         using var provider = LogOn("NoAmount", out _);
         using var secured = provider.CreateObjectSpace();
-        var probe = Record.Exception(() => secured.GetObjects<WorkflowNotification>(
-            CriteriaOperator.Parse($"Contains([{WorkflowNotifications.SnapshotColumn}], '12.00')")).Count);
-        Assert.True(probe != null || secured.GetObjects<WorkflowNotification>(
-            CriteriaOperator.Parse($"Contains([{WorkflowNotifications.SnapshotColumn}], '12.00')")).Count == 0);
+        Assert.NotNull(Record.Exception(() => secured.GetObjects<WorkflowNotification>(
+            CriteriaOperator.Parse($"Contains([{WorkflowNotifications.SnapshotColumn}], '12.00')")).Count));
         Assert.NotNull(secured.GetObjectByKey<WorkflowNotification>(id));   // the row itself is readable
+    }
+
+    /// <summary>The check runs on the record the notice named, not the subject's current reference.</summary>
+    [Theory, InlineData(false), InlineData(true)]
+    public void A_hidden_reference_reassigned_to_a_readable_one_stays_masked(bool prefetch)
+    {
+        var id = Notified();   // mail-buyer: hidden from OneUser
+        Change(id, pr => pr.Buyer = ((IObjectSpaceLink)pr).ObjectSpace.GetObjectByKey<ApplicationUser>(someoneElse));
+        Assert.Equal($"T=Desk A=12.00 B={M} U={M}", RenderFor(id, "OneUser", prefetch));
+    }
+
+    /// <summary>A readable reference reassigned to a hidden one: shown without prefetch; with prefetch XAF judges the
+    /// subject's member on its current (hidden) target and masks. Fails closed either way; documented in integrating.md.</summary>
+    [Theory, InlineData(false, "someone-else"), InlineData(true, M)]
+    public void A_readable_reference_reassigned_to_a_hidden_one(bool prefetch, string shown)
+    {
+        var id = Notified(buyerId: someoneElse);
+        Change(id, pr => pr.Buyer = ((IObjectSpaceLink)pr).ObjectSpace.GetObjectByKey<ApplicationUser>(buyer));
+        Assert.Equal($"T=Desk A=12.00 B={shown} U={shown}", RenderFor(id, "OneUser", prefetch));
+    }
+
+    /// <summary>A calculated member's getter reads members no permission check names, so it is not snapshotted: it is filled
+    /// at render time from what the viewer's space holds (its denied members already blanked).</summary>
+    [Fact] public void A_calculated_member_is_filled_at_render_time()
+    {
+        var id = Notified("S={Summary} T={Title}");
+        Change(id, pr => pr.Title = "Chair");
+        Assert.Equal("S=Chair (12.00) T=Desk", Unsecured(id));
+        Assert.Equal("S=Chair (12.00) T=Desk", RenderFor(id, "UserReaders"));
+        Assert.Equal("S=Chair (0) T=Desk", RenderFor(id, "NoAmount"));
+    }
+
+    /// <summary>A dispatcher holding a row another process deleted meanwhile: no snapshot row to read, so nothing renders
+    /// (not the subject's values now).</summary>
+    [Fact] public void A_note_deleted_after_it_was_loaded_masks_every_placeholder()
+    {
+        var id = Notified();
+        using var outbox = db.NewObjectSpace();
+        var note = outbox.GetObjectByKey<WorkflowNotification>(id);
+        using (var os = db.NewObjectSpace())
+        {
+            os.Delete(os.GetObjectByKey<WorkflowNotification>(id));
+            os.CommitChanges();
+        }
+        Assert.Equal($"T={M} A={M} B={M} U={M}", WorkflowNotifications.Render(note, outbox, null));
+    }
+
+    [Fact] public void A_space_that_is_not_an_EF_Core_space_masks_every_placeholder()
+    {
+        var id = Notified();
+        using var outbox = db.NewObjectSpace();
+        using var other = new NonPersistentObjectSpace(XafTypesInfo.Instance);
+        Assert.Equal($"T={M} A={M} B={M} U={M}", WorkflowNotifications.Render(outbox.GetObjectByKey<WorkflowNotification>(id), other, null));
     }
 
     [Fact] public void An_unknown_subject_type_masks_every_placeholder()

@@ -247,8 +247,13 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
             object? Now(string column) => column == fk
                 ? (e.Reference(nameof(WorkflowNotification.Instance)).CurrentValue as BaseObject)?.ID ?? (Guid?)e.Property(fk).CurrentValue
                 : e.Property(column).CurrentValue;
+            bool Written(string column) => column == fk
+                ? e.Reference(nameof(WorkflowNotification.Instance)).IsModified || e.Property(fk).IsModified
+                : e.Property(column).IsModified;
             for (var i = 0; i < fixedColumns.Length; i++)
-                if (!Same(Now(fixedColumns[i]), row[1 + i]))
+                // Only a column the save writes can change. A row attached for a delivery update carries no shadow values (the
+                // snapshot, the instance key: null) and does not write them; an Update of the whole row writes them all, judged.
+                if (Written(fixedColumns[i]) && !Same(Now(fixedColumns[i]), row[1 + i]))
                     throw new UserFriendlyException("Workflow notification: its recipient and text are fixed once written; only delivery (State, Attempts, LastError) may change.");
         }
     }

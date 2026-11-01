@@ -1,5 +1,6 @@
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.EFCore;
+using Microsoft.EntityFrameworkCore;
 using DevExpress.Persistent.BaseImpl.EF.PermissionPolicy;
 using XafStateless.Demo.Module.BusinessObjects;
 using XafStateless.Engine;
@@ -152,5 +153,26 @@ public class RequesterNotificationTests : IClassFixture<TestDb>
             os.CommitChanges();
         }
         Assert.Equal(NotificationState.Failed, db.NewObjectSpace().GetObjectByKey<WorkflowNotification>(noteId).State);
+
+        // A dispatcher that attaches an untracked row for its delivery update: the row carries no shadow values (the snapshot,
+        // the instance key: null), and neither Attach nor Update writes them, so the update is accepted and they stay.
+        string? Snapshot()
+        {
+            using var ctx = db.NewDbContext();
+            return ctx.Set<WorkflowNotification>().Where(x => x.ID == noteId)
+                .Select(x => EF.Property<string?>(x, WorkflowNotifications.SnapshotColumn)).Single();
+        }
+        var stored = Snapshot();
+        Assert.NotNull(stored);
+        foreach (var (attempts, attach) in new[] { (2, true), (3, false) })
+        {
+            using var ctx = db.NewDbContext();
+            var n = ctx.Set<WorkflowNotification>().AsNoTracking().Single(x => x.ID == noteId);
+            if (attach) ctx.Attach(n); else ctx.Update(n);
+            n.Attempts = attempts;
+            ctx.SaveChanges();
+        }
+        Assert.Equal(3, db.NewObjectSpace().GetObjectByKey<WorkflowNotification>(noteId).Attempts);
+        Assert.Equal(stored, Snapshot());
     }
 }

@@ -1,3 +1,6 @@
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations.Schema;
+using System.Globalization;
 using DevExpress.Persistent.Base;
 using DevExpress.Persistent.BaseImpl.EF;
 using Microsoft.EntityFrameworkCore;
@@ -16,4 +19,7 @@ public class PurchaseRequest : BaseObject, IWorkflowSubject
     /// <summary>A user member: a Task state or a Notify can address it as <c>@Buyer</c> (CARD-2615).</summary>
     public virtual ApplicationUser? Buyer { get; set; }
     public virtual WorkflowInstance? Workflow { get; set; }
+    /// <summary>A calculated member: a Notify placeholder on it is filled when the notification is shown, from what the
+    /// viewer's space holds (its getter's reads are invisible to a permission check, so no snapshot; CARD-2788).</summary>
+    [NotMapped, Browsable(false)] public string Summary => $"{Title} ({Amount.ToString(CultureInfo.InvariantCulture)})";
 }

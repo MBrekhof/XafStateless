@@ -430,7 +430,10 @@ that moment, and the records it read, in the column `Snapshot` (`nvarchar(max) N
 an EF shadow property declared by `ConfigureXafStateless()` (step 3), not a member of `WorkflowNotification`: it holds
 values a recipient may not be allowed to read, so no view, criteria, permission or Web API reaches it. **Schema change**
 for a host upgrading from 0.4.x: add the column (nullable; existing rows stay `NULL` and keep rendering live). A host
-whose model lacks it writes no snapshot.
+whose model lacks it writes no snapshot. **Not for a Middle Tier Security host**: XAF's Middle Tier copies an entity's
+shadow properties into the payload it sends the client, unmasked; the hosts so far are Blazor Server (the DbContext stays
+on the server). A dispatcher that attaches an untracked row for its delivery update is fine: it does not write the
+snapshot.
 
 The host delivers the rows. Read the `Pending` rows through a non-secured object space, deliver each one (resolve the
 role, or the user by `UserId`, to addresses however the host does that; a user that no longer exists is a failed
@@ -447,7 +450,14 @@ recipient, on the records the placeholder read then (loaded again by key through
 - a reference to a record their criteria hide, or one deleted since: `*******`, with or without
   `PreFetchReferenceProperties()`;
 - the whole subject unreadable, or not found: every placeholder `*******`;
-- a reference empty at notify time: empty.
+- a reference empty at notify time: empty;
+- a reference shows its record's default member (`[DefaultProperty]`, or the one XAF picks).
+
+A **calculated member** (a getter without a column, `[NotMapped]`) is not snapshotted: its getter reads members no
+permission check sees, so it is filled when the notice is shown, from the recipient's space (where what they may not read
+is already blanked), as 0.4 did; likewise a reference whose default member is itself calculated or a reference. `space`
+must be the recipient's EF Core object space (not a non-persistent or composite one): anything else masks every
+placeholder, as does a notification deleted since it was loaded.
 
 Checks judge the records as they are now: with `PreFetchReferenceProperties()`, a reference reassigned since to a record
 the recipient may not read can mask the old value even if they could read that one (it never shows a hidden value). A
