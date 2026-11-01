@@ -455,8 +455,10 @@ recipient, on the records the placeholder read then (loaded again by key through
 
 A **calculated member** (a getter without a column, `[NotMapped]`) is not snapshotted: its getter reads members no
 permission check sees, so it is filled when the notice is shown, from the recipient's space (where what they may not read
-is already blanked), as 0.4 did; likewise a reference whose default member is itself calculated or a reference. `space`
-must be the recipient's EF Core object space (not a non-persistent or composite one): anything else masks every
+is already blanked), as 0.4 did. The same holds for a collection (`{Lines.Count}` would count rows the recipient's
+criteria hide), a reference whose default member is calculated or has none, and a record with a composite key. A default
+member that is itself a reference is followed. `space` must be the recipient's EF Core object space, and `security` its
+strategy (not a non-persistent or composite space, not a non-secured space with a strategy): anything else masks every
 placeholder, as does a notification deleted since it was loaded.
 
 Checks judge the records as they are now: with `PreFetchReferenceProperties()`, a reference reassigned since to a record

@@ -45,15 +45,17 @@ public static class WorkflowNotifications
         if (!note.IsTemplate) return note.Body;
         var placeholders = XafWorkflowEnvironment.Placeholder();
         string AllMasked() => placeholders.Replace(note.Body, Masked);
-        // A secured space without its strategy can judge nothing, and the snapshot is unmasked (WorkflowCaller refuses one too).
-        // A composite or non-persistent space: not one this can read the snapshot or judge records in.
-        if (space is not EFCoreObjectSpace { DbContext: var ctx } || (security == null && space is ISecuredObjectSpace)) return AllMasked();
+        // A secured space comes with its strategy, a strategy with its secured space: one without the other judges nothing
+        // (the snapshot is unmasked; a non-secured space shows what the strategy denies). A composite, non-persistent or
+        // disposed space: not one this can read the snapshot or judge records in.
+        if (space is not EFCoreObjectSpace { IsDisposed: false, DbContext: { } ctx } || (security != null) != (space is ISecuredObjectSpace))
+            return AllMasked();
         if (!TryReadSnapshot(ctx, note, out var snapshot)) return AllMasked();
 
         var loaded = new Dictionary<(Type, object), object?>();
         var (typeName, key) = note.Instance is { } i ? (i.SubjectType, i.SubjectId) : ("", Guid.Empty);
         var type = space.TypesInfo.FindTypeInfo(typeName);
-        var subject = type is { IsPersistent: true, KeyMember.MemberType: var kt } && kt == typeof(Guid) && space.IsKnownType(type.Type)
+        var subject = type is { IsPersistent: true, KeyMembers: [{ MemberType: var kt }] } && kt == typeof(Guid) && space.IsKnownType(type.Type)
             ? Load(space, type, key, loaded) : null;
         if (subject == null) return AllMasked();
 
@@ -82,6 +84,8 @@ public static class WorkflowNotifications
         foreach (var name in XafWorkflowEnvironment.Placeholder().Matches(template).Select(m => m.Groups[1].Value).Distinct())
         {
             var (text, reads, judged) = Walk(os.TypesInfo, type, subject, name);
+            // A record with a composite key cannot be found again by one key: judged at render time instead.
+            judged &= reads.All(r => os.TypesInfo.FindTypeInfo(r.Owner.GetType()).KeyMembers.Count == 1);
             entries[name] = judged
                 ? new(text, reads.Select(r => new Read(os.TypesInfo.FindTypeInfo(r.Owner.GetType()).FullName,
                     Convert.ToString(os.GetKeyValue(r.Owner), CultureInfo.InvariantCulture) ?? "", r.Member)).ToList())
@@ -99,8 +103,9 @@ public static class WorkflowNotifications
     /// record itself), and whether those reads judge the text. A null hop, or a hop declared on a subtype the value is not,
     /// renders "" (an unknown member too: validation refuses one). A value of a non-persistent type (<c>{Title.Length}</c>)
     /// is read without a check: its owner's member was. A record shows as its runtime type's default member (FindTypeInfo
-    /// unwraps EF proxies). Not judged: a calculated member on a record (its getter may read members no check names), or a
-    /// record whose default member is not a stored scalar (then it shows as its ToString, as 0.4 did).
+    /// unwraps EF proxies), followed while that is a reference. Not judged: a calculated member or a collection on a record
+    /// (a getter reads members no check names; a count includes rows the user's criteria hide), or a record without a
+    /// default member (it shows as its ToString).
     /// </summary>
     static (string Text, List<(object Owner, string? Member)> Reads, bool Judged) Walk(ITypesInfo types, ITypeInfo type, object subject, string path)
     {
@@ -113,17 +118,22 @@ public static class WorkflowNotifications
             if (types.FindTypeInfo(value.GetType()) is { IsPersistent: true })
             {
                 reads.Add((value, hop.Name));
-                judged &= hop.IsPersistent;
+                judged &= hop.IsPersistent && !hop.IsList;
             }
             value = hop.GetValue(value);
         }
-        if (value != null && types.FindTypeInfo(value.GetType()) is { IsPersistent: true } target)
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        while (value != null && types.FindTypeInfo(value.GetType()) is { IsPersistent: true } target)
         {
-            var shown = target.DefaultMember;
-            reads.Add((value, shown?.Name));
-            if (shown is { IsPersistent: true, MemberTypeInfo.IsPersistent: false })
-                return (Convert.ToString(shown.GetValue(value), CultureInfo.InvariantCulture) ?? "", reads, judged);
-            judged = false;
+            if (!seen.Add(value) || target.DefaultMember is not { } shown)
+            {
+                reads.Add((value, null));
+                judged = false;
+                break;
+            }
+            reads.Add((value, shown.Name));
+            judged &= shown.IsPersistent && !shown.IsList;
+            value = shown.GetValue(value);
         }
         return (Convert.ToString(value, CultureInfo.InvariantCulture) ?? "", reads, judged);
     }
@@ -145,7 +155,7 @@ public static class WorkflowNotifications
     }
 
     static bool MayRead(IObjectSpace space, IRequestSecurityStrategy security, Read read, Dictionary<(Type, object), object?> loaded) =>
-        space.TypesInfo.FindTypeInfo(read.Type) is { IsPersistent: true, KeyMember: { } keyMember } type
+        space.TypesInfo.FindTypeInfo(read.Type) is { IsPersistent: true, KeyMembers: [var keyMember] } type
         && space.IsKnownType(type.Type)
         && ParseKey(keyMember.MemberType, read.Key) is { } key
         && Load(space, type, key, loaded) is { } record

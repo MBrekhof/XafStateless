@@ -172,7 +172,16 @@ public class RequesterNotificationTests : IClassFixture<TestDb>
             n.Attempts = attempts;
             ctx.SaveChanges();
         }
-        Assert.Equal(3, db.NewObjectSpace().GetObjectByKey<WorkflowNotification>(noteId).Attempts);
+        var reloaded = db.NewObjectSpace().GetObjectByKey<WorkflowNotification>(noteId);
+        Assert.Equal(3, reloaded.Attempts);
+        Assert.NotNull(reloaded.Instance);
         Assert.Equal(stored, Snapshot());
+        using (var ctx = db.NewDbContext())   // Update writes every CLR column: a changed text is still refused
+        {
+            var n = ctx.Set<WorkflowNotification>().AsNoTracking().Single(x => x.ID == noteId);
+            ctx.Update(n);
+            n.Body = "changed";
+            Assert.StartsWith("Workflow notification:", Assert.ThrowsAny<Exception>(() => ctx.SaveChanges()).Message);
+        }
     }
 }

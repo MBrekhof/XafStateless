@@ -288,7 +288,9 @@ public class NotificationRenderTests : IClassFixture<TestDb>
 
     [Theory, InlineData("{"), InlineData(""), InlineData("[]"), InlineData("{}"),   // {}: no entry for any placeholder
      InlineData("""{"Title":null}"""), InlineData("""{"Title":{}}"""), InlineData("""{"Title":{"Text":"x","Reads":[null]}}"""),
-     InlineData("""{"Title":{"Text":"x","Reads":[{"Type":"XafStateless.Demo.Module.BusinessObjects.PurchaseRequest","Key":null}]}}""")]
+     InlineData("""{"Title":{"Text":"x","Reads":[{"Type":"XafStateless.Demo.Module.BusinessObjects.PurchaseRequest","Key":null}]}}"""),
+     // one damaged entry masks the sound ones too
+     InlineData("""{"Title":{"Text":"x","Reads":[{"Type":null,"Key":"1"}]},"Amount":{"Text":"12.00","Reads":[]},"Buyer":{"Text":"b","Reads":[]},"Buyer.UserName":{"Text":"b","Reads":[]}}""")]
     public void A_damaged_snapshot_masks_every_placeholder(string json)
     {
         var id = Notified();
@@ -360,7 +362,39 @@ public class NotificationRenderTests : IClassFixture<TestDb>
         var id = Notified();
         using var outbox = db.NewObjectSpace();
         using var other = new NonPersistentObjectSpace(XafTypesInfo.Instance);
+        other.AdditionalObjectSpaces.Add(outbox);   // shaped like an entry screen's composite space
         Assert.Equal($"T={M} A={M} B={M} U={M}", WorkflowNotifications.Render(outbox.GetObjectByKey<WorkflowNotification>(id), other, null));
+    }
+
+    /// <summary>A strategy with a non-secured space (a dispatcher passing its outbox space by mistake): that space does not
+    /// blank what the strategy denies, so nothing renders.</summary>
+    [Fact] public void A_strategy_with_a_non_secured_space_masks_every_placeholder()
+    {
+        var id = Notified();
+        using var provider = LogOn("UserReaders", out var security);
+        using var outbox = db.NewObjectSpace();
+        Assert.Equal($"T={M} A={M} B={M} U={M}", WorkflowNotifications.Render(outbox.GetObjectByKey<WorkflowNotification>(id), outbox, security));
+    }
+
+    /// <summary>A count over a collection includes rows the recipient's criteria hide: not snapshotted, counted at render time.</summary>
+    [Fact] public void A_collection_count_is_filled_at_render_time()
+    {
+        Guid owner;
+        using (var os = db.NewObjectSpace())
+        {
+            var u = os.CreateObject<ApplicationUser>();
+            (u.UserName, u.IsActive) = ($"roles-{Guid.NewGuid():N}", true);
+            os.CommitChanges();
+            owner = u.ID;
+        }
+        var id = Notified("R={Buyer.Roles.Count}", buyerId: owner);
+        Assert.Equal("R=0", Unsecured(id));
+        using (var os = db.NewObjectSpace())
+        {
+            os.GetObjectByKey<ApplicationUser>(owner).Roles.Add(os.FirstOrDefault<PermissionPolicyRole>(r => r.Name == "UserReaders")!);
+            os.CommitChanges();
+        }
+        Assert.Equal("R=1", Unsecured(id));
     }
 
     [Fact] public void An_unknown_subject_type_masks_every_placeholder()

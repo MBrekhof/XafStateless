@@ -141,6 +141,28 @@ The findings fall into one family: what the replay can and cannot judge. Leaks (
    carries null shadow values (the snapshot and the instance key), and neither Attach nor Update writes them (verified:
    EF leaves unknown shadow values unmodified). Tested both.
 
+## Third review (Gemini, on a20ea26)
+
+No Critical. The same family again (what the replay can judge); leaks fixed, the rest fixed when cheap or carded.
+
+1. **Major, accepted.** `{Buyer.Roles.Count}`: a collection hop counted rows the recipient's criteria hide. Collection hops
+   are not judged (Live). Tested.
+2. **Major, accepted.** A strategy with a non-secured space (a dispatcher passing its outbox space) rendered what the
+   strategy denies; a disposed space threw. Now a secured space needs its strategy and a strategy its secured space; a
+   disposed space masks. Tested (non-secured + strategy).
+3. **Major, accepted.** A reference whose default member is a reference showed via ToString without checking the inner
+   record. The default member is followed while it is a reference (cycle-safe), each record read; calculated or
+   collection default members are Live; no default member: ToString, Live. Untested (CARD-2811).
+4. **Major, carded (CARD-2812).** The guards read a reference's key from the navigation before the FK property; contrived
+   (host code detaching the principal), shared by CheckTasks and StateLockGuard.
+5. **Minor, partly.** The non-EF test now uses a composite space with the EF space added. Gemini's premise (it then knows
+   the subject type) did not reproduce: `IsKnownType` stays false; the gate masks either way.
+6. **Minor, accepted.** A damaged entry next to sound ones masks all; the delivery test checks the instance key survives and
+   that Update with a changed Body is refused.
+7. **Minor, accepted.** A record with a composite key makes its placeholder Live; single-key lookups use `KeyMembers: [k]`.
+
+Verification: Engine 59, Module 248; 16 of 17 mutations killed (survivor: CARD-2811).
+
 ## Not in scope
 
 The release (0.5.0 to the private feed) waits for Martin's go; BPG then bumps and adds its E2E check.
