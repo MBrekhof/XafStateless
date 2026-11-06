@@ -10,10 +10,12 @@
   their underlying type and refuses NaN/infinities. Demo `PurchaseRequest.Approver` (demo schema only; no library schema
   change). **Compatibility:** a constant starting with `=` is now an expression (`='=x'` for the literal).
 - Gemini reviewed plan and diff; every finding settled in `docs/plans/2026-11-06-card-2895-setfield-expression.md`.
-  New cards: CARD-2908 (decision: non-admin `GrantDesigner` roles can copy unreadable data through an expression),
-  CARD-2909 (Notify/Run action placeholders can name user secrets, unverified).
-- **Not released.** 0.5.0 = CARD-2871 + CARD-2895, waits for Martin's go; BPG then maps `"=..."` straight through.
-- Tests: Engine 59, Module 323; 10 mutants killed. No E2E run (no UI change beyond the Target lookup listing references).
+  New cards: CARD-2908 (non-admin `GrantDesigner` roles can copy unreadable data through an expression; Martin decided
+  "keep as documented"), CARD-2909 (Notify/Run action placeholders can name user secrets; reuses `UserSecrets`).
+- **Not released.** 0.5.0 went out without it (`70a44f2`). The next release (0.6.0 suggested: the `=` constant change)
+  waits for Martin's go; BPG then maps `"=..."` straight through.
+- Tests: Engine 59, Module 324 on master with CARD-2809/2811; 10 mutants killed. No E2E run (no UI change beyond the
+  Target lookup listing references).
 
 # Previous session — 2026-11-06
 
