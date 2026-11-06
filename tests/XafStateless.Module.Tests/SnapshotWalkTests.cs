@@ -70,4 +70,35 @@ public class SnapshotWalkTests(TestDb db) : IClassFixture<TestDb>
              (typeof(ApplicationUser).FullName!, userId.ToString(), "UserName")],
             desk2.Reads.Select(r => (r.Type, r.Key, r.Member)));
     }
+
+    /// <summary>CARD-2809 (Gemini): a record created in the same command before the Notify, whose key the store generates
+    /// (IDENTITY), has no final key yet: stored by its temporary key it could never be found again and would mask forever.
+    /// It is left Live instead. A new record with a client-side key (Guid) is judged as before.</summary>
+    [Fact] public void A_new_record_with_a_store_generated_key_is_live_a_new_guid_keyed_one_is_judged()
+    {
+        using var provider = new EFCoreObjectSpaceProvider<TestSubjectsDbContext>((b, _) => b.UseConnectionString(db.ConnectionString));
+        using var os = provider.CreateObjectSpace();   // nothing saved: as inside a command, before CommitChanges
+        var ticket = os.CreateObject<Ticket>();
+        ticket.Number = "T-1";
+        var desk = os.CreateObject<Desk>();
+        desk.Code = "D9";
+        var s = os.CreateObject<OtherSubject>();
+        (s.Name, s.Ticket, s.Desk) = ("S", ticket, desk);
+        var type = os.TypesInfo.FindTypeInfo(typeof(OtherSubject));
+        Dictionary<string, WorkflowNotifications.Entry> Snap(string template) =>
+            JsonSerializer.Deserialize<Dictionary<string, WorkflowNotifications.Entry>>(WorkflowNotifications.Snapshot(os, type, s, template))!;
+        var entries = Snap("{Ticket.Number} {TicketId} {Desk.Code}");
+        Assert.True(entries["Ticket.Number"].Live);
+        Assert.Equal(("", 0), (entries["Ticket.Number"].Text, entries["Ticket.Number"].Reads.Count));   // nothing unmasked stored
+        Assert.True(entries["TicketId"].Live);   // the subject's foreign key holds the temporary value too
+        Assert.False(entries["Desk.Code"].Live);
+        Assert.Equal(desk.ID.ToString(), entries["Desk.Code"].Reads[^1].Key);
+
+        os.CommitChanges();   // the key is final now: judged, by that key
+        var saved = Snap("{Ticket.Number} {TicketId}");
+        Assert.False(saved["Ticket.Number"].Live);
+        Assert.Equal(("T-1", ticket.ID.ToString()), (saved["Ticket.Number"].Text, saved["Ticket.Number"].Reads[^1].Key));
+        Assert.NotEqual(0, ticket.ID);
+        Assert.Equal((false, ticket.ID.ToString()), (saved["TicketId"].Live, saved["TicketId"].Text));
+    }
 }

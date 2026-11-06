@@ -84,8 +84,9 @@ public static class WorkflowNotifications
         foreach (var name in XafWorkflowEnvironment.Placeholder().Matches(template).Select(m => m.Groups[1].Value).Distinct())
         {
             var (text, reads, judged) = Walk(os.TypesInfo, type, subject, name);
-            // A record with a composite key cannot be found again by one key: judged at render time instead.
-            judged &= reads.All(r => os.TypesInfo.FindTypeInfo(r.Owner.GetType()).KeyMembers.Count == 1);
+            // A record with a composite key cannot be found again by one key, nor one whose key the store has yet to generate
+            // (created in this command, IDENTITY: CARD-2809): judged at render time instead.
+            judged = judged && reads.All(r => os.TypesInfo.FindTypeInfo(r.Owner.GetType()).KeyMembers.Count == 1 && !Temporary(os, r.Owner, r.Member));
             entries[name] = judged
                 ? new(text, reads.Select(r => new Read(os.TypesInfo.FindTypeInfo(r.Owner.GetType()).FullName,
                     Convert.ToString(os.GetKeyValue(r.Owner), CultureInfo.InvariantCulture) ?? "", r.Member)).ToList())
@@ -93,6 +94,15 @@ public static class WorkflowNotifications
         }
         return JsonSerializer.Serialize(entries);
     }
+
+    /// <summary>True when <paramref name="record"/> is new and its key is still EF's temporary value (the store generates it
+    /// on save: the key written now would not find it afterwards), or when the member read holds a temporary value (a foreign
+    /// key to such a record: the text would be wrong). False outside an EF Core space or for a type its model does not map.</summary>
+    static bool Temporary(IObjectSpace os, object record, string? member) =>
+        os is EFCoreObjectSpace { DbContext: { } ctx } && ctx.Model.FindRuntimeEntityType(record.GetType()) != null   // proxies too
+        && ctx.Entry(record) is var e
+        && ((e.State == EntityState.Added && e.Metadata.FindPrimaryKey()?.Properties.Any(p => e.Property(p).IsTemporary) == true)
+            || (member != null && e.Metadata.FindProperty(member) is { } m && e.Property(m).IsTemporary));
 
     /// <summary>True when the host's model has the snapshot column (it called <c>ConfigureXafStateless</c>).</summary>
     internal static bool HasSnapshot(DbContext ctx) =>

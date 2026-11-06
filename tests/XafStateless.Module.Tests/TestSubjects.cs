@@ -29,6 +29,15 @@ public class OtherSubject : BaseObject, IWorkflowSubject
     public virtual Desk? Desk { get; set; }
     public virtual Bare? Bare { get; set; }
     public virtual Node? Node { get; set; }
+    public virtual int? TicketId { get; set; }
+    [ForeignKey(nameof(TicketId))] public virtual Ticket? Ticket { get; set; }
+}
+
+/// <summary>A record with a store-generated (IDENTITY) key: unsaved, it has only a temporary key (CARD-2809).</summary>
+public class Ticket
+{
+    [System.ComponentModel.DataAnnotations.Key] public virtual int ID { get; set; }
+    public virtual string Number { get; set; } = "";
 }
 
 /// <summary>Shows as a calculated member: its getter reads members no permission check names.</summary>
@@ -70,6 +79,7 @@ public class TestSubjectsDbContext(DbContextOptions<TestSubjectsDbContext> optio
     public DbSet<Desk> Desks { get; set; }
     public DbSet<Bare> Bares { get; set; }
     public DbSet<Node> Nodes { get; set; }
+    public DbSet<Ticket> Tickets { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
