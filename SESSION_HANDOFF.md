@@ -1,4 +1,21 @@
-# Session handoff — 2026-11-06
+# Session handoff — 2026-11-07
+
+## This session (2026-11-06/07): a Set field takes an expression (CARD-2895, for BPG CARD-2816/2817)
+
+- `b18c388`: a SetField Value starting with `=` is XAF criteria evaluated on the subject in the runtime's command space
+  when the state is entered (`=[Project.Manager]`); its target may be a reference. Publish walks the criteria's paths on
+  XAF type info (browsable, exact names, no user secrets on any XAF user interface, no joins/casts/`^.`) and types the
+  result with DevExpress's criteria-to-LINQ converter; the runtime walks the paths again. `Write` now loads a member
+  before writing and exempts every name of its column (`RuntimeScope.AllowColumn`). `ConvertOutput` takes enums through
+  their underlying type and refuses NaN/infinities. Demo `PurchaseRequest.Approver` (demo schema only; no library schema
+  change). **Compatibility:** a constant starting with `=` is now an expression (`='=x'` for the literal).
+- Gemini reviewed plan and diff; every finding settled in `docs/plans/2026-11-06-card-2895-setfield-expression.md`.
+  New cards: CARD-2908 (decision: non-admin `GrantDesigner` roles can copy unreadable data through an expression),
+  CARD-2909 (Notify/Run action placeholders can name user secrets, unverified).
+- **Not released.** 0.5.0 = CARD-2871 + CARD-2895, waits for Martin's go; BPG then maps `"=..."` straight through.
+- Tests: Engine 59, Module 323; 10 mutants killed. No E2E run (no UI change beyond the Target lookup listing references).
+
+# Previous session — 2026-11-06
 
 ## This session (2026-11-06): requester and assignee rows read their own instance (CARD-2871)
 
