@@ -1,4 +1,19 @@
-# Session handoff — 2026-11-01 (late)
+# Session handoff — 2026-11-06
+
+## This session (2026-11-06): requester and assignee rows read their own instance (CARD-2871)
+
+- `10f93f8`: `GrantRequesterRows` / `GrantAssigneeRows` (and so `GrantParticipant`) also write one `WorkflowInstance` row
+  per Allow own-notification / own-task row, `[<N>][[Instance.ID] = [^.ID] And (that row)]`, rebuilt from those rows on
+  every call (`WorkflowPermissions.InstanceRows`). A `@Member` recipient whose role reads the subject but has no role
+  rows now sees the in-app notification text and the task's instance. No schema change; hosts get the rows on their
+  next updater run.
+- Gemini reviewed plan and diff; the plan's first design (two extra row families) drifted on roles seeded before, so
+  the rows are now derived from the own rows. Everything settled in
+  `docs/plans/2026-11-06-card-2871-instance-read-for-user-rows.md`.
+- **Not released.** Goes out with 0.5.0 (Martin's go). BPG can then drop its interim `GrantRoleRows` grant (BPG CARD-2615).
+- Tests: Engine 59, Module 259, E2E 5/5; three mutations of `InstanceRows` killed.
+
+# Previous session — 2026-11-01 (late)
 
 ## This session (2026-11-01, late): a notification keeps its values (CARD-2788, CARD-2783)
 
