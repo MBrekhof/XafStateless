@@ -51,6 +51,15 @@ public class WorkflowDefTests
         Assert.Equal(12.5m, RuleSetEvaluator.ConvertOutput(typeof(decimal), 12.5d));
         Assert.Throws<InvalidCastException>(() => RuleSetEvaluator.ConvertOutput(typeof(int), null));
         Assert.Throws<OverflowException>(() => RuleSetEvaluator.ConvertOutput(typeof(int), (long)int.MaxValue + 10L));
+        // CARD-2895 (Gemini): an enum takes a number through its underlying type, a name if defined; NaN and infinities refuse.
+        Assert.Equal(StateKind.Task, RuleSetEvaluator.ConvertOutput(typeof(StateKind), (long)StateKind.Task));
+        Assert.Equal(StateKind.Task, RuleSetEvaluator.ConvertOutput(typeof(StateKind?), "Task"));
+        Assert.Throws<OverflowException>(() => RuleSetEvaluator.ConvertOutput(typeof(StateKind), 1L << 32));   // was StateKind 0
+        Assert.Throws<ArgumentException>(() => RuleSetEvaluator.ConvertOutput(typeof(StateKind), "Nope"));
+        Assert.Throws<FormatException>(() => RuleSetEvaluator.ConvertOutput(typeof(StateKind), 99));
+        Assert.Throws<OverflowException>(() => RuleSetEvaluator.ConvertOutput(typeof(double), double.NaN));
+        Assert.Throws<OverflowException>(() => RuleSetEvaluator.ConvertOutput(typeof(float?), float.PositiveInfinity));
+        Assert.Equal(1.5d, RuleSetEvaluator.ConvertOutput(typeof(double), 1.5d));
     }
 
     [Fact]

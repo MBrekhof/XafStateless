@@ -275,7 +275,7 @@ public class DefinitionServiceTests : IClassFixture<TestDb>
         var e = E(os, d.States.Single(s => s.Key == "ordered"), EffectKind.Increment, "", "");
         Assert.Equal(["Amount", "Revisions"], ((IStringLookupSource)e).LookupValues(nameof(WorkflowEffect.Target), () => []).Order());
         e.Kind = EffectKind.SetField;
-        Assert.Equal(["Amount", "Ordered", "Revisions", "Title"], ((IStringLookupSource)e).LookupValues(nameof(WorkflowEffect.Target), () => []).Order());
+        Assert.Equal(["Amount", "Approver", "Buyer", "Ordered", "Revisions", "Title"], ((IStringLookupSource)e).LookupValues(nameof(WorkflowEffect.Target), () => []).Order());
     }
 
     [Fact] public void Criteria_with_unknown_member_is_refused()

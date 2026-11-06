@@ -129,6 +129,8 @@ public static class RuleSetEvaluator
             throw new InvalidCastException($"Cannot assign null to non-nullable '{memberType.Name}'.");
         }
         var target = underlying ?? memberType;
+        if (value is double d && !double.IsFinite(d) || value is float f && !float.IsFinite(f))
+            throw new OverflowException($"{value} is not a finite number");   // the database refuses NaN and infinities
         if (target.IsInstanceOfType(value)) return value;
         if (target.IsEnum)
         {
@@ -137,7 +139,8 @@ public static class RuleSetEvaluator
                 var parsed = Enum.Parse(target, s);
                 return Enum.IsDefined(target, parsed) ? parsed : throw new FormatException($"{value} is not a {target.Name}");
             }
-            var enumVal = Enum.ToObject(target, value);
+            // Through the underlying type first: Enum.ToObject truncates a long silently.
+            var enumVal = Enum.ToObject(target, Convert.ChangeType(value, Enum.GetUnderlyingType(target), CultureInfo.InvariantCulture));
             return Enum.IsDefined(target, enumVal) ? enumVal : throw new FormatException($"{value} is not a {target.Name}");
         }
         if (target == typeof(Guid) && value is string gs) return Guid.Parse(gs);

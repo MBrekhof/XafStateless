@@ -512,6 +512,34 @@ public class PermissionTests : IClassFixture<TestDb>
         Assert.Null(StateOf(fresh));
     }
 
+    /// <summary>CARD-2895 (BPG CARD-2816): the caller's secured space reads the subject's user reference as null; a Set field
+    /// expression evaluates in the runtime's command space and sets Approver from it all the same.</summary>
+    [Fact] public void A_set_field_expression_reads_what_the_callers_space_cannot()
+    {
+        var name = Publish(new WorkflowDef($"sfx-{Guid.NewGuid():N}", 1, "draft",
+            [
+                new("draft", "Draft", StateKind.Manual),
+                new("submitted", "Submitted", StateKind.Manual, OnEntry: [new(EffectKind.SetField, "Approver", "=[Buyer]")]),
+                new("done", "Done", StateKind.Final),
+            ],
+            [new("draft", "Submit", "submitted"), new("submitted", "Finish", "done")]));
+        Guid id, buyer;
+        using (var os = db.NewObjectSpace())
+        {
+            var pr = os.CreateObject<PurchaseRequest>();
+            (pr.Title, pr.Buyer) = ("Chair", os.FirstOrDefault<ApplicationUser>(u => u.UserName == Admin));
+            os.CommitChanges();
+            (id, buyer) = (pr.ID, pr.Buyer!.ID);
+        }
+        using var provider = LogOn(Approver, out var security);
+        using var approverSpace = provider.CreateObjectSpace();
+        Assert.Null(approverSpace.GetObjectByKey<PurchaseRequest>(id).Buyer);   // the precondition: the caller cannot read the user
+        var c = Caller(approverSpace, security, Approver, "Approvers");
+        Ok(rt.Start(c, typeof(PurchaseRequest), id, name));
+        Ok(rt.Fire(c, typeof(PurchaseRequest), id, "Submit"));
+        Assert.Equal(buyer, db.NewObjectSpace().GetObjectByKey<PurchaseRequest>(id).Approver?.ID);
+    }
+
     // ---- XSM-013: admins see all open tasks; Open task on the request ----
 
     /// <summary>An open task of role <see cref="Others"/> on a fresh request; returns (request id, task id).</summary>

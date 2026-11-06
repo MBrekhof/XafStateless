@@ -228,6 +228,14 @@ public sealed class StateLockGuard : SaveChangesInterceptor
         type.FindProperty(member)
         ?? (type.FindNavigation(member) is { IsOnDependent: true, ForeignKey.Properties: [var key] } ? key : null);
 
+    /// <summary>The names a lock may use for <paramref name="member"/>'s column: the member, its column (a reference's foreign
+    /// key), and every reference held by that key. The runtime exempts them all for one Set field, so a lock on <c>BuyerId</c>
+    /// does not refuse a Set field of <c>Buyer</c> or the other way round.</summary>
+    internal static IEnumerable<string> Aliases(Microsoft.EntityFrameworkCore.Metadata.IEntityType type, string member) =>
+        Column(type, member) is not { } column ? [member]
+        : new[] { member, column.Name }.Concat(type.GetNavigations()
+            .Where(n => n.IsOnDependent && n.ForeignKey.Properties is [var key] && key == column).Select(n => n.Name)).Distinct();
+
     /// <summary>The value <paramref name="baseline"/> starts <paramref name="column"/> with: its CLR getter, or, for a shadow
     /// foreign key, the key of the object the baseline's navigation holds (null when it holds none).</summary>
     static object? BaselineValue(Microsoft.EntityFrameworkCore.Metadata.IEntityType type, string member,

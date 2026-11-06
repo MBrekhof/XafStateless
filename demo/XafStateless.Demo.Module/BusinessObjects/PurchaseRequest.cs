@@ -18,6 +18,8 @@ public class PurchaseRequest : BaseObject, IWorkflowSubject
     public virtual int? Revisions { get; set; }
     /// <summary>A user member: a Task state or a Notify can address it as <c>@Buyer</c> (CARD-2615).</summary>
     public virtual ApplicationUser? Buyer { get; set; }
+    /// <summary>A second user member a workflow fills itself: a Set field <c>=[Buyer]</c> when a state is entered (CARD-2895).</summary>
+    public virtual ApplicationUser? Approver { get; set; }
     public virtual WorkflowInstance? Workflow { get; set; }
     /// <summary>A calculated member: a Notify placeholder on it is filled when the notification is shown, from what the
     /// viewer's space holds (its getter's reads are invisible to a permission check, so no snapshot; CARD-2788).</summary>

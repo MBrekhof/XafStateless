@@ -18,8 +18,8 @@ public class WorkflowEffect : BaseObject, IStringLookupSource
 
     public IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames) => LookupValues(memberName, roleNames, () => []);
 
-    /// <summary>Target: the requester, the subject's user members and role names for Notify, the host's action names for RunAction, the subject's settable members for SetField,
-    /// its counters for Increment.</summary>
+    /// <summary>Target: the requester, the subject's user members and role names for Notify, the host's action names for RunAction, the subject's scalars and
+    /// references for SetField (a reference is set by an expression, <c>=[Project.Manager]</c>; CARD-2895), its counters for Increment.</summary>
     public IEnumerable<string> LookupValues(string memberName, Func<IReadOnlyList<string>> roleNames, Func<IReadOnlyList<string>> actionNames) =>
         memberName != nameof(Target) ? []
         : Kind switch
@@ -28,7 +28,7 @@ public class WorkflowEffect : BaseObject, IStringLookupSource
             EffectKind.RunAction => actionNames(),
             EffectKind.RunRules => State?.Definition?.RuleSets.Select(r => r.Key).Where(k => !string.IsNullOrWhiteSpace(k)) ?? [],
             _ => XafTypesInfo.Instance.FindTypeInfo(State?.Definition?.TargetTypeName ?? "") is { } target
-                ? (Kind == EffectKind.Increment ? WorkflowMembers.Counters(target) : WorkflowMembers.Supported(target)).Select(m => m.Name)
+                ? (Kind == EffectKind.Increment ? WorkflowMembers.Counters(target) : WorkflowMembers.Lockable(target)).Select(m => m.Name)
                 : [],
         };
 }

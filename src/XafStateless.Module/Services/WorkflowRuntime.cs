@@ -1,5 +1,6 @@
 using System.Globalization;
 using DevExpress.Data.Filtering;
+using DevExpress.Data.Filtering.Exceptions;
 using DevExpress.ExpressApp;
 using DevExpress.ExpressApp.DC;
 using DevExpress.ExpressApp.EFCore;
@@ -263,6 +264,11 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, W
         foreach (var effect in state.Effects)
             switch (effect.Kind)
             {
+                case EffectKind.SetField when XafWorkflowEnvironment.Expression(effect.Value) is { } expression:   // CARD-2895
+                    Write(x, WorkflowMembers.Lockable(x.Type).FirstOrDefault(m => m.Name == effect.Target)
+                             ?? throw new InvalidOperationException($"'{effect.Target}' cannot be set by a workflow"),
+                        member => Evaluate(x, member, expression));
+                    break;
                 case EffectKind.SetField:
                     Write(x, WorkflowMembers.Supported(x.Type).FirstOrDefault(m => m.Name == effect.Target)
                              ?? throw new InvalidOperationException($"'{effect.Target}' cannot be set by a workflow"),
@@ -363,12 +369,51 @@ public sealed class WorkflowRuntime(DefinitionStore store, TimeProvider clock, W
         return m.GetValue(x.Subject) is ISecurityUser { IsActive: true } user ? ((Guid)m.MemberTypeInfo.KeyMember.GetValue(user), user.UserName) : null;
     }
 
-    /// <summary>A SetField or Increment write of one subject member, exempted from StateLockGuard for this member only; keyed by
-    /// the EF entity type (never a proxy type), as the guard keys it.</summary>
+    /// <summary>A Set field expression's value for <paramref name="member"/>, evaluated on the command space's subject (CARD-2895):
+    /// a reference gets the evaluated object as the command space holds it (null clears it), a scalar the value converted as
+    /// a rule set's output is. An expression that cannot be evaluated (a definition published before 0.5.0 whose constant
+    /// started with '='), a value of the wrong type, null into a required member, or a failed conversion (an overflow)
+    /// refuses the command.</summary>
+    static object? Evaluate(Cmd x, IMemberInfo member, string expression)
+    {
+        string Refusal(string why) => $"'{member.Name}' cannot be set from '{expression}': {why}";
+        try
+        {
+            var op = CriteriaOperator.Parse(expression) ?? throw new UserFriendlyException(Refusal("the expression is empty"));
+            // Again here: a definition published before 0.5.0 (or edited past Publish) was never checked.
+            if (op.Accept(new XafWorkflowEnvironment.Paths(x.Type)) is { } bad) throw new UserFriendlyException(Refusal(bad));
+            var value = x.Os.GetExpressionEvaluator(x.Type.Type, op).Evaluate(x.Subject);
+            if (value is null && Required(x, member)) throw new UserFriendlyException(Refusal("it is empty, and the member is required"));
+            if (member.MemberTypeInfo is not { IsPersistent: true }) return RuleSetEvaluator.ConvertOutput(member.MemberType, value);
+            if (value is null) return null;
+            if (!member.MemberType.IsInstanceOfType(value))
+                throw new UserFriendlyException(Refusal($"it gives a {value.GetType().Name}, not a {member.MemberType.Name}"));
+            return x.Os.GetObject(value) ?? throw new UserFriendlyException(Refusal("the object it gives is not in the database"));
+        }
+        catch (Exception ex) when (ex is CriteriaParserException or InvalidPropertyPathException or OverflowException or FormatException
+                                       or InvalidCastException or ArgumentException or DivideByZeroException or InvalidOperationException
+                                       or IndexOutOfRangeException)
+        {
+            throw new UserFriendlyException(Refusal(ex.Message));
+        }
+    }
+
+    /// <summary>True when the subject's column (a reference: its foreign key) for <paramref name="member"/> takes no null.</summary>
+    static bool Required(Cmd x, IMemberInfo member)
+    {
+        var entity = x.Scope!.Context.Entry(x.Subject).Metadata;
+        return entity.FindProperty(member.Name) is { } p ? !p.IsNullable : entity.FindNavigation(member.Name)?.ForeignKey.IsRequired == true;
+    }
+
+    /// <summary>A SetField or Increment write of one subject member, exempted from StateLockGuard for this member and the other
+    /// names of its column (a reference and its declared foreign key; <see cref="StateLockGuard.Aliases"/>); keyed by the EF
+    /// entity type (never a proxy type), as the guard keys it.</summary>
     static void Write(Cmd x, IMemberInfo member, Func<IMemberInfo, object?> value)
     {
         var runtimeScope = x.Scope ?? throw new InvalidOperationException("effects run only inside the runtime scope");
-        member.SetValue(x.Subject, value(member));
-        runtimeScope.Allow(runtimeScope.Context.Entry(x.Subject).Metadata.ClrType, x.Subject.ID, member.Name);
+        var newValue = value(member);
+        _ = member.GetValue(x.Subject);   // loaded first: EF ignores clearing a lazy reference it has not loaded
+        member.SetValue(x.Subject, newValue);
+        runtimeScope.AllowColumn(runtimeScope.Context.Entry(x.Subject).Metadata, x.Subject.ID, member.Name);
     }
 }

@@ -205,9 +205,9 @@ public class UserAssigneeTests : IClassFixture<TestDb>
         using var os = db.NewObjectSpace();
         var d = DefinitionMapper.ToDraft(os, Flow("lk"), typeof(PurchaseRequest).FullName!);
         var review = d.States.Single(s => s.Key == "review");
-        Assert.Equal(["@Buyer", "Approvers"], ((IStringLookupSource)review).LookupValues(nameof(WorkflowState.TaskRole), () => ["Approvers"]).Order());
+        Assert.Equal(["@Approver", "@Buyer", "Approvers"], ((IStringLookupSource)review).LookupValues(nameof(WorkflowState.TaskRole), () => ["Approvers"]).Order());
         var notify = d.States.Single(s => s.Key == "draft").Effects.Single();
-        Assert.Equal(["@Buyer", "@requester", "Approvers"], ((IStringLookupSource)notify).LookupValues(nameof(WorkflowEffect.Target), () => ["Approvers"]).Order());
+        Assert.Equal(["@Approver", "@Buyer", "@requester", "Approvers"], ((IStringLookupSource)notify).LookupValues(nameof(WorkflowEffect.Target), () => ["Approvers"]).Order());
     }
 
     [Theory, InlineData(false), InlineData(true)]

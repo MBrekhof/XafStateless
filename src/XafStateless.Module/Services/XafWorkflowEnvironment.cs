@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using DevExpress.Data.Filtering;
 using DevExpress.Data.Filtering.Exceptions;
 using DevExpress.Data.Filtering.Helpers;
+using DevExpress.Data.Linq;
 using DevExpress.ExpressApp.DC;
 using XafStateless.Engine;
 
@@ -44,8 +45,11 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
         switch (effect.Kind)
         {
             case EffectKind.SetField:
+                if (Expression(effect.Value) is { } expression) return CheckExpression(effect.Target, expression);
                 if (WorkflowMembers.Supported(target).FirstOrDefault(m => m.Name == effect.Target) is not { } member)
-                    return $"'{effect.Target}' cannot be set by a workflow";
+                    return WorkflowMembers.Lockable(target).Any(m => m.Name == effect.Target)
+                        ? $"'{effect.Target}' is a reference: set it with an expression, e.g. =[{effect.Target}]"
+                        : $"'{effect.Target}' cannot be set by a workflow";
                 try { ConvertValue(member.MemberType, effect.Value); return null; }
                 catch (Exception ex) when (ex is FormatException or OverflowException or ArgumentException or InvalidCastException)
                 { return $"'{effect.Value}' is not a valid {(Nullable.GetUnderlyingType(member.MemberType) ?? member.MemberType).Name} for '{effect.Target}'"; }
@@ -53,6 +57,83 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
                 return BadPlaceholder(effect.Value);
             default:
                 return $"unknown effect kind {effect.Kind}";
+        }
+    }
+
+    /// <summary>A Set field Value that starts with '=' is an expression (CARD-2895): the text after it; null for a constant.</summary>
+    internal static string? Expression(string? value) => value is ['=', .. var rest] ? rest : null;
+
+    /// <summary>A Set field expression at publish: <paramref name="memberName"/> is a scalar or reference a state may lock;
+    /// the expression parses; every path in it, inside aggregates too, names visible members of XAF's type info exactly
+    /// (as the runtime's evaluator resolves them) and no <see cref="WorkflowMembers.UserSecrets"/> of a user (<see cref="Paths"/>);
+    /// and its result type, as DevExpress's criteria-to-LINQ converter infers it on the subject's CLR type, fits the member.</summary>
+    string? CheckExpression(string memberName, string expression)
+    {
+        if (WorkflowMembers.Lockable(target).FirstOrDefault(m => m.Name == memberName) is not { } member)
+            return $"'{memberName}' cannot be set by a workflow";
+        string Invalid(string why) => $"'={expression}' is not a valid expression for '{memberName}': {why}";
+        CriteriaOperator? op;
+        try { op = CriteriaOperator.Parse(expression); }
+        catch (CriteriaParserException ex) { return Invalid(ex.Message); }
+        if (op is null) return $"'{memberName}' needs an expression after '='";   // empty, blank or a comment only
+        if (op.Accept(new Paths(target)) is { } bad) return Invalid(bad);
+        Type type;
+        try { type = new CriteriaToExpressionConverterForObjects().Convert(System.Linq.Expressions.Expression.Parameter(target.Type), op).Type; }
+        catch (Exception ex) { return Invalid(ex.Message); }
+
+        static Type Strip(Type t) => Nullable.GetUnderlyingType(t) ?? t;
+        static bool IsNumber(Type t) => !t.IsEnum && Type.GetTypeCode(t) is >= TypeCode.SByte and <= TypeCode.Decimal;
+        var (from, to) = (Strip(type), Strip(member.MemberType));
+        var fits = member.MemberTypeInfo is { IsPersistent: true }
+            ? to.IsAssignableFrom(from)
+            : from == to || (IsNumber(from) && IsNumber(to))
+              || (to.IsEnum && (from == typeof(string) || (!from.IsEnum && WorkflowMembers.IsIntegral(from))));   // a name or a number
+        return fits ? null : $"'={expression}' gives a {from.Name}, which does not fit '{memberName}' ({to.Name})";
+    }
+
+    /// <summary>The first path of a criteria the runtime should not evaluate, as a reason; null when every path is fine. A path
+    /// resolves hop by hop on XAF's type info, case-sensitively as XAF's evaluator does, from the subject or, inside an
+    /// aggregate, from the collection's element. Refused: an unknown or hidden (non-browsable) member, a user secret, a join
+    /// (it reads any record), a '^.' parent and a type cast (both left out to keep the walk simple).</summary>
+    internal sealed class Paths(ITypeInfo subject) : IClientCriteriaVisitor<string?>
+    {
+        readonly Stack<ITypeInfo> scope = new([subject]);
+
+        string? First(IEnumerable<CriteriaOperator?> operands) =>
+            operands.Select(o => o is null ? null : o.Accept(this)).FirstOrDefault(e => e != null);
+
+        public string? Visit(BetweenOperator o) => First([o.TestExpression, o.BeginExpression, o.EndExpression]);
+        public string? Visit(BinaryOperator o) => First([o.LeftOperand, o.RightOperand]);
+        public string? Visit(UnaryOperator o) => First([o.Operand]);
+        public string? Visit(InOperator o) => First([o.LeftOperand, .. o.Operands]);
+        public string? Visit(GroupOperator o) => First(o.Operands);
+        public string? Visit(OperandValue o) => null;
+        public string? Visit(FunctionOperator o) => First(o.Operands);
+        public string? Visit(JoinOperand o) => "a join ([<Type>][...]) is not supported";
+        public string? Visit(OperandProperty o) => Resolve(o.PropertyName, out _);
+
+        public string? Visit(AggregateOperand o)
+        {
+            if (o.IsTopLevel || o.CollectionProperty is null) return "an aggregate needs a collection";
+            if (Resolve(o.CollectionProperty.PropertyName, out var list) is { } bad) return bad;
+            if (list is not { IsList: true, ListElementTypeInfo: { } element }) return $"'{o.CollectionProperty.PropertyName}' is not a collection";
+            scope.Push(element);
+            try { return First([o.Condition, o.AggregatedExpression, .. o.CustomAggregateOperands ?? []]); }
+            finally { scope.Pop(); }
+        }
+
+        string? Resolve(string path, out IMemberInfo? last)
+        {
+            (last, var type) = (null, scope.Peek());
+            foreach (var hop in path.Split('.'))
+            {
+                if (hop.StartsWith('^') || hop.Contains('<')) return $"'{path}': '^.' and type casts are not supported";
+                if (type?.FindMember(hop) is not { } m) return $"'{hop}' is not a member of {type?.Name}";
+                if (!m.IsVisible || (WorkflowMembers.IsUserType(type.Type) && WorkflowMembers.UserSecrets.Contains(hop)))
+                    return $"'{hop}' of {type.Name} cannot be read by a workflow";
+                (last, type) = (m, m.MemberTypeInfo);
+            }
+            return null;
         }
     }
 

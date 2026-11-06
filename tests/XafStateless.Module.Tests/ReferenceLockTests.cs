@@ -186,6 +186,36 @@ public class ReferenceLockTests : IClassFixture<TestDb>
         using (var ctx = db.NewSubjectsContext()) Assert.Equal(first, ctx.OtherSubjects.Single(x => x.ID == id).BuyerId);
     }
 
+    /// <summary>CARD-2895 (Gemini): a lock on 'Buyer' covers the declared key 'BuyerId'; a Set field of either name is the
+    /// runtime's write of that column, so the runtime exempts every name of it.</summary>
+    [Theory, InlineData("BuyerId"), InlineData("Buyer")]
+    public void The_runtime_exemption_covers_every_name_of_the_column(string written)
+    {
+        var instanceId = db.NewObjectSpace().GetObjectByKey<PurchaseRequest>(Submitted()).Workflow!.ID;   // locks 'Buyer'
+        Guid id;
+        using (var ctx = db.NewSubjectsContext())
+        using (RuntimeScope.Open(ctx))
+        {
+            var s = ctx.CreateProxy<OtherSubject>();
+            (s.Name, s.BuyerId, s.Workflow) = ("Twin", first, ctx.WorkflowInstances.Single(i => i.ID == instanceId));
+            ctx.OtherSubjects.Add(s);
+            ctx.SaveChanges();
+            id = s.ID;
+        }
+        using (var ctx = db.NewSubjectsContext())
+        using (var scope = RuntimeScope.Open(ctx))
+        {
+            var s = ctx.OtherSubjects.Single(x => x.ID == id);
+            var entity = ctx.Entry(s).Metadata;
+            Assert.Equal(["Buyer", "BuyerId"], StateLockGuard.Aliases(entity, written).Order());
+            scope.AllowColumn(entity, id, written);   // what WorkflowRuntime.Write calls for every Set field, Increment and rule output
+            if (written == "Buyer") s.Buyer = ctx.Set<ApplicationUser>().Single(u => u.ID == second);
+            else s.BuyerId = second;
+            ctx.SaveChanges();
+        }
+        using (var ctx = db.NewSubjectsContext()) Assert.Equal(second, ctx.OtherSubjects.Single(x => x.ID == id).BuyerId);
+    }
+
     [Fact] public void Other_members_save_while_the_reference_is_locked()
     {
         var id = Submitted();

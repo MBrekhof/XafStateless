@@ -351,6 +351,25 @@ public class PurchaseRequest : BaseObject, IWorkflowSubject
   effect's Value, 1 when empty), so a Decision after it can limit attempts: `rework` increments `Attempts`, and the
   Decision's first branch `Attempts >= 3` leads to a Final state. A result outside the member's range refuses the
   command and commits nothing.
+- **A Set field takes an expression** (CARD-2895, 0.5.0): a Value starting with `=` is XAF criteria language evaluated on
+  the subject when the state is entered, in the runtime's non-secured command space, e.g. `=[Project.Manager]`,
+  `=[Amount] * 2`, `=ToStr([Amount])`. Its target may then also be a reference (any lockable member): it gets the
+  evaluated object as the command space holds it, and null clears the reference. The runtime checks the paths again
+  when it runs (a definition published before 0.5.0 was never checked). Effects run in their order, so a Set field
+  `Approver = =[Project.Manager]` placed before `Notify @Approver`, on a Task state assigned to `@Approver`, makes both
+  use the value of that moment, whoever saved the record last. Publish checks that the expression parses; that every
+  member on its paths, inside aggregates too, is a browsable member of XAF's type info, spelled exactly (XAF's evaluator
+  is case-sensitive); that it reads none of a user's secrets (`StoredPassword`, `ChangePasswordOnFirstLogon`,
+  `AccessFailedCount`, `LockoutEnd`, `Roles`, `UserLogins`); and that its result type fits the member (same type; a number
+  into a number; a whole number or a name into an enum; a reference into a reference it is assignable to). Joins
+  (`[<Type>][...]`), `^.`, type casts (`[Ref.<Type>Member]`) and functions DevExpress's criteria-to-LINQ converter cannot
+  type are refused; that converter is also stricter about mixed types than the evaluator (`Iif([Ordered], [Amount], 0)`
+  needs `0m`). A value that cannot be written at runtime (null into a non-nullable or required member, an overflow, an
+  enum name that does not exist) refuses the command and commits nothing. `{Member}` is never filled in a Set field: it
+  is literal text. **Compatibility:** a constant that starts with `=` is now an expression; write a literal `=` text as
+  `='=x'`. **Who may write one:** the expression reads in the non-secured command space, as a Decision's criteria do, so
+  a role with `GrantDesigner` can make a workflow copy any browsable member reachable from the subject into a member
+  other users read. Grant it to users trusted with that.
 
 A designer then creates a definition, picks the subject class in **Target Type Name** (the list offers every persistent,
 non-abstract class implementing `IWorkflowSubject`, by caption; the full class name is stored), and publishes it.
@@ -614,5 +633,5 @@ and run **Start workflow**. `tests/XafStateless.E2E` walks this whole path again
   converter's provider type, the two compare unequal: the save is then refused, never allowed.
 - **`PermissionPolicyRole` roles and `IPermissionPolicyUser` users.** Role names come from `PermissionPolicyRole`, and
   the current user's roles from `IPermissionPolicyUser.Roles`.
-- **Criteria members are top-level.** A transition's criteria and the lock and effect members use the subject's own
-  members, not dotted paths.
+- **Criteria members are top-level.** A transition's criteria and the lock and effect target members use the subject's
+  own members, not dotted paths. A Set field expression's paths may go further (step 7).

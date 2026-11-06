@@ -34,6 +34,18 @@ public static class WorkflowMembers
                     && m.MemberTypeInfo.KeyMember?.MemberType == typeof(Guid))
         .ToList();
 
+    /// <summary>The members of a user (a class implementing <see cref="ISecurityUser"/>) a Set field expression may not read
+    /// (CARD-2895): its password, its lockout and login data, and its roles (who administers the application).</summary>
+    public static readonly IReadOnlySet<string> UserSecrets = new HashSet<string>(StringComparer.Ordinal)
+        { "StoredPassword", "ChangePasswordOnFirstLogon", "AccessFailedCount", "LockoutEnd", "Roles", "UserLogins" };
+
+    /// <summary>A user class, or one of the XAF interfaces that declare a user's secrets; several of them do not extend
+    /// <see cref="ISecurityUser"/>, so a member typed as one of them is a user too.</summary>
+    public static bool IsUserType(Type t) =>
+        new[] { typeof(ISecurityUser), typeof(ISecurityUserWithRoles), typeof(ISecurityUserLockout), typeof(IOAuthSecurityUser),
+                typeof(DevExpress.Persistent.Base.Security.IAuthenticationStandardUser), typeof(DevExpress.Persistent.Base.IPermissionPolicyUser) }
+            .Any(i => i.IsAssignableFrom(t));
+
     static bool IsScalar(Type t)
     {
         t = Nullable.GetUnderlyingType(t) ?? t;

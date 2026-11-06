@@ -70,6 +70,13 @@ internal sealed class RuntimeScope : IDisposable
     /// is identified like the guard does: its EF entity CLR type and ID, since subject types in different tables may share IDs.</summary>
     public void Allow(Type subjectType, Guid subjectId, string member) { lock (allowed) allowed.Add((subjectType, subjectId, member)); }
 
+    /// <summary><see cref="Allow"/> for every name of <paramref name="member"/>'s column (<see cref="StateLockGuard.Aliases"/>):
+    /// a lock on a reference or on its declared foreign key covers the same column (CARD-2895).</summary>
+    public void AllowColumn(Microsoft.EntityFrameworkCore.Metadata.IEntityType subjectType, Guid subjectId, string member)
+    {
+        foreach (var name in StateLockGuard.Aliases(subjectType, member)) Allow(subjectType.ClrType, subjectId, name);
+    }
+
     /// <summary>True when <see cref="Allow"/> recorded this (type, subject, member) and the scope is still open.</summary>
     public bool IsAllowed(Type subjectType, Guid subjectId, string member) { lock (allowed) return !disposed && allowed.Contains((subjectType, subjectId, member)); }
 
