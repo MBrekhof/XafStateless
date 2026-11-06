@@ -10,8 +10,16 @@
 - Gemini reviewed plan and diff; the plan's first design (two extra row families) drifted on roles seeded before, so
   the rows are now derived from the own rows. Everything settled in
   `docs/plans/2026-11-06-card-2871-instance-read-for-user-rows.md`.
-- **Not released.** Goes out with 0.5.0 (Martin's go). BPG can then drop its interim `GrantRoleRows` grant (BPG CARD-2615).
 - Tests: Engine 59, Module 259, E2E 5/5; three mutations of `InstanceRows` killed.
+- **0.5.0 published** to the private feed (Engine, Module, Blazor; Martin's go 2026-11-07), release commit `70a44f2`:
+  CARD-2788 (notification snapshot: schema change `WorkflowNotifications.Snapshot nvarchar(max) NULL`), CARD-2794
+  (DevExpress range `[26.1.6,26.2)`: hosts must be on 26.1.6), CARD-2871. Packed and tested in a clean worktree of
+  `70a44f2`, because another session (CARD-2895, SetField expressions) had uncommitted work in this checkout; none of it
+  is in 0.5.0. A scratch restore of `XafStateless.Blazor` 0.5.0 from the feed resolves Module/Engine 0.5.0 and
+  DevExpress 26.1.6. Next for BPG: bump to 0.5.0, add the CARD-2788 E2E check, drop the interim `GrantRoleRows` grant
+  (BPG CARD-2615).
+- Decisions (Martin): CARD-2810 → Middle Tier stays unsupported (already documented; card in Review). XSM-030 → not now,
+  card in Backlog until BPG WF-008 needs fork/join.
 
 # Previous session — 2026-11-01 (late)
 
