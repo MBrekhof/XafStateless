@@ -17,6 +17,9 @@ namespace XafStateless.Demo.Module.BusinessObjects;
 public class DemoEFCoreDbContext : DbContext {
     public DemoEFCoreDbContext(DbContextOptions<DemoEFCoreDbContext> options) : base(options) {
     }
+    /// <summary>For a derived context with its own options type (the tests' context with test-only entities).</summary>
+    protected DemoEFCoreDbContext(DbContextOptions options) : base(options) {
+    }
     //public DbSet<ModuleInfo> ModulesInfo { get; set; }
     public DbSet<ModelDifference> ModelDifferences { get; set; }
     public DbSet<ModelDifferenceAspect> ModelDifferenceAspects { get; set; }

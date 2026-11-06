@@ -129,6 +129,7 @@ public static class WorkflowNotifications
             {
                 reads.Add((value, null));
                 judged = false;
+                if (target.DefaultMember != null) value = null;   // a loop: BaseObject.ToString would follow it into a stack overflow
                 break;
             }
             reads.Add((value, shown.Name));

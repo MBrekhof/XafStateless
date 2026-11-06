@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations.Schema;
 using DevExpress.Persistent.BaseImpl.EF;
 using Microsoft.EntityFrameworkCore;
 using XafStateless.Demo.Module.BusinessObjects;
@@ -20,15 +22,54 @@ public class OtherSubject : BaseObject, IWorkflowSubject
     [Precision(18, 2)] public virtual decimal Amount { get; set; }
     /// <summary>A reference with a CLR foreign key (PurchaseRequest.Buyer's is a shadow one): CARD-2735 locks judge both.</summary>
     public virtual Guid? BuyerId { get; set; }
-    [System.ComponentModel.DataAnnotations.Schema.ForeignKey(nameof(BuyerId))] public virtual ApplicationUser? Buyer { get; set; }
+    [ForeignKey(nameof(BuyerId))] public virtual ApplicationUser? Buyer { get; set; }
     public virtual WorkflowInstance? Workflow { get; set; }
+    // CARD-2811: references whose default member is calculated, a reference, or missing
+    public virtual Contact? Contact { get; set; }
+    public virtual Desk? Desk { get; set; }
+    public virtual Bare? Bare { get; set; }
+    public virtual Node? Node { get; set; }
+}
+
+/// <summary>Shows as a calculated member: its getter reads members no permission check names.</summary>
+[DefaultProperty(nameof(FullName))]
+public class Contact : BaseObject
+{
+    public virtual string First { get; set; } = "";
+    public virtual string Last { get; set; } = "";
+    [NotMapped] public string FullName => First + " " + Last;
+}
+
+/// <summary>Shows as a reference (its owner, who shows as UserName).</summary>
+[DefaultProperty(nameof(Owner))]
+public class Desk : BaseObject
+{
+    public virtual string Code { get; set; } = "";
+    public virtual ApplicationUser? Owner { get; set; }
+}
+
+/// <summary>No declared default member: XAF falls back to the key, so it shows as its ID.</summary>
+public class Bare : BaseObject
+{
+    public virtual int Number { get; set; }
+}
+
+/// <summary>Shows as the next node: a node that points at itself is a loop with nothing to show.</summary>
+[DefaultProperty(nameof(Next))]
+public class Node : BaseObject
+{
+    public virtual Node? Next { get; set; }
 }
 
 /// <summary>The demo context plus the test-only subject types; the TestDb database is created from it.</summary>
-public class TestSubjectsDbContext(DbContextOptions<DemoEFCoreDbContext> options) : DemoEFCoreDbContext(options)
+public class TestSubjectsDbContext(DbContextOptions<TestSubjectsDbContext> options) : DemoEFCoreDbContext(options)   // an XAF provider builds it too
 {
     public DbSet<ConvertedSubject> ConvertedSubjects { get; set; }
     public DbSet<OtherSubject> OtherSubjects { get; set; }
+    public DbSet<Contact> Contacts { get; set; }
+    public DbSet<Desk> Desks { get; set; }
+    public DbSet<Bare> Bares { get; set; }
+    public DbSet<Node> Nodes { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -58,10 +58,10 @@ public sealed class TestDb : IDisposable
         return new DemoEFCoreDbContext(options.Options);
     }
 
-    /// <summary>A context that also maps <see cref="ConvertedSubject"/> and <see cref="OtherSubject"/>.</summary>
+    /// <summary>A context that also maps the test-only entity types (<see cref="TestSubjectsDbContext"/>).</summary>
     public TestSubjectsDbContext NewSubjectsContext()
     {
-        var options = new DbContextOptionsBuilder<DemoEFCoreDbContext>();
+        var options = new DbContextOptionsBuilder<TestSubjectsDbContext>();
         options.UseConnectionString(ConnectionString);
         return new TestSubjectsDbContext(options.Options);
     }
