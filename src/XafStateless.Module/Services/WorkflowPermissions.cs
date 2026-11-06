@@ -84,7 +84,8 @@ public static class WorkflowPermissions
     }
 
     /// <summary>Read on the notifications addressed to the logged-on user as a workflow's requester: role-wide
-    /// <c>[UserId] = CurrentUserId()</c>, or per type and joined to the subject as <see cref="GrantRoleRows"/> describes.</summary>
+    /// <c>[UserId] = CurrentUserId()</c>, or per type and joined to the subject as <see cref="GrantRoleRows"/> describes. Also Read
+    /// on the instances those notifications point at, with the same types and scope (CARD-2871: the notification renders).</summary>
     /// <remarks>Pass every subject type whose requester notifications the role should read (null scope: unscoped). Once the
     /// rows are per type, a type left out is not readable, unless the role's instance rows name it.</remarks>
     public static void GrantRequesterRows(PermissionPolicyRole r, params (Type subjectType, string? scope)[] subjects) =>
@@ -92,12 +93,17 @@ public static class WorkflowPermissions
 
     /// <summary>Read on the tasks assigned to the logged-on user through a user member (<c>@Member</c>, CARD-2615): role-wide
     /// <c>[UserId] = CurrentUserId()</c>, or per type and joined to the subject as <see cref="GrantRoleRows"/> describes. A user's
-    /// notifications are read through the requester rows (<see cref="GrantRequesterRows"/>): the same criteria.</summary>
+    /// notifications are read through the requester rows (<see cref="GrantRequesterRows"/>): the same criteria. Also Read on the
+    /// instances those tasks point at, with the same types and scope (CARD-2871).</summary>
     /// <remarks>As for <see cref="GrantRequesterRows"/>, pass every subject type the role's users may be assigned on.</remarks>
     public static void GrantAssigneeRows(PermissionPolicyRole r, params (Type subjectType, string? scope)[] subjects) =>
         AssigneeRows(r, Validate(subjects));
 
-    static void AssigneeRows(PermissionPolicyRole r, List<Subject> subjects) => Rows(r, AssigneeFamily, subjects, ServedTypes(r));
+    static void AssigneeRows(PermissionPolicyRole r, List<Subject> subjects)
+    {
+        Rows(r, AssigneeFamily, subjects, ServedTypes(r));
+        InstanceRows(r, AssigneeFamily);
+    }
 
     static void RequireName(PermissionPolicyRole r)
     {
@@ -127,6 +133,29 @@ public static class WorkflowPermissions
     static readonly Family RequesterFamily = new(typeof(WorkflowNotification), CriteriaOperator.Parse(RequesterText), RequesterText, "Instance.SubjectType", "Instance.SubjectId");
     static readonly Family AssigneeFamily = RequesterFamily with { Target = typeof(WorkflowTask) };
     static readonly Family InstanceFamily = new(typeof(WorkflowInstance), null, null, nameof(WorkflowInstance.SubjectType), nameof(WorkflowInstance.SubjectId));
+
+    // ---- CARD-2871: the instance behind the user's own notifications and tasks ----
+
+    static readonly BinaryOperator OwnInstance = new(new OperandProperty("Instance.ID"), new OperandProperty("^.ID"), BinaryOperatorType.Equal);
+
+    /// <summary>Makes the role's instance rows of <paramref name="f"/>'s own rows (requester or assignee) match those rows: one
+    /// instance row per Allow row of <paramref name="f"/> these methods wrote, <c>[&lt;Row type&gt;][[Instance.ID] = ^.ID And (row)]</c>,
+    /// so the user reads an instance exactly when one of their readable rows points at it (same types, same scope, also on a
+    /// role seeded before). An instance row of this kind with no such row any more loses its read.</summary>
+    static void InstanceRows(PermissionPolicyRole r, Family f)
+    {
+        bool Own(string? criteria) => criteria == f.Wide || Match(f, criteria) != null;
+        var wanted = ObjectRows(r, f.Target)
+            .Where(o => o.ReadState == SecurityPermissionState.Allow && Own(o.Criteria))
+            .Select(o => new JoinOperand(f.Target.FullName!, CriteriaOperator.And(OwnInstance, TryParse(o.Criteria))).ToString())
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var o in ObjectRows(r, typeof(WorkflowInstance)))
+            if (!wanted.Contains(o.Criteria ?? "") && TryParse(o.Criteria) is JoinOperand { Condition: GroupOperator { OperatorType: GroupOperatorType.And, Operands.Count: >= 2 } g } j
+                && j.JoinTypeName == f.Target.FullName && g.Operands[0].ToString() == OwnInstance.ToString()
+                && Own((g.Operands.Count == 2 ? g.Operands[1] : new GroupOperator(GroupOperatorType.And, g.Operands.Skip(1))).ToString()))
+                Narrow(o);   // a row of this kind only: an admin's own join row is never touched
+        foreach (var w in wanted) Object(r, typeof(WorkflowInstance), w);
+    }
 
     static List<Subject> Validate(IEnumerable<(Type type, string? scope)> subjects)
     {
@@ -180,7 +209,11 @@ public static class WorkflowPermissions
         Rows(r, InstanceFamily, subjects, served);
     }
 
-    static void RequesterRows(PermissionPolicyRole r, List<Subject> subjects) => Rows(r, RequesterFamily, subjects, ServedTypes(r));
+    static void RequesterRows(PermissionPolicyRole r, List<Subject> subjects)
+    {
+        Rows(r, RequesterFamily, subjects, ServedTypes(r));
+        InstanceRows(r, RequesterFamily);
+    }
 
     /// <summary>The subject types the role's instance rows grant without a join: plain and legacy combined rows.</summary>
     static List<string> ServedTypes(PermissionPolicyRole r) =>

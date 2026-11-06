@@ -250,6 +250,7 @@ PermissionPolicyRole GrantRole(string name, Action<PermissionPolicyRole> grant) 
   | Task, notification to the role | `[Role] = 'r'` | `[Role] = 'r' And [Instance.SubjectType] = 'T' And [<T>][[ID] = [^.Instance.SubjectId] And S]` |
   | Notification to the requester or a user, task assigned to a user | `[UserId] = CurrentUserId()` | the same with `[UserId] = CurrentUserId()` in front |
   | Instance | `[SubjectType] = 'T'` | `[SubjectType] = 'T' And [<T>][[ID] = [^.SubjectId] And S]` |
+  | Instance behind the user's own notifications (tasks) | `[<N>][[Instance.ID] = [^.ID] And U]`, one per row U of the line above, `N` = `WorkflowNotification` (`WorkflowTask`) | the same |
 
   - Once a role has a scoped subject, its task and notification rows are per type: an unscoped subject of the same role
     gets `[Role] = 'r' And [Instance.SubjectType] = 'T'`, and later calls keep it that way.
@@ -267,7 +268,12 @@ PermissionPolicyRole GrantRole(string name, Action<PermissionPolicyRole> grant) 
     requester, or to a user member). `GrantRequesterRows` cannot tell which types a requester-only role served before, so pass every type whose
     requester notifications stay readable, unscoped ones with a null scope. `GrantAssigneeRows(role, ...)` adds read on
     the tasks assigned to the logged-on user through a user member (step 9), with the same arguments and the same rule:
-    give it to every role whose users can be assigned, with every subject type they can be assigned on.
+    give it to every role whose users can be assigned, with every subject type they can be assigned on. Both also read
+    the workflow instance behind the user's own notifications (tasks), with the same types and scope, so a user read only
+    through these rows sees the notification's text and the task's instance (CARD-2871, from 0.5.0). These instance rows
+    are rebuilt from the role's own-notification and own-task rows on every call: a row of that kind whose source row is
+    gone or no longer allows Read loses its Read. Such a role reads no definitions: give it Read on the definition types
+    (as `GrantParticipant` does) if its users open the instance or rely on its diagram and field locks.
 - **The designer actions check role names.** New version, Validate, Publish and Dry run show only to users holding a
   role named `Administrators` or `WorkflowDesigners`. Use exactly those names.
 - **The designer validates as it edits.** The definition view validates what is on screen, saved or not, on every

@@ -420,4 +420,75 @@ public class NotificationRenderTests : IClassFixture<TestDb>
     [Theory, InlineData("OtherTitles"), InlineData("Nothing")]
     public void A_subject_the_recipient_cannot_read_masks_every_placeholder(string user) =>
         Assert.Equal($"T={M} A={M} B={M} U={M}", RenderFor(Notified(), user));
+
+    /// <summary>CARD-2871: a user whose role reads the subject and has only the requester rows (no role rows) reads the
+    /// instance of a notification addressed to them, so the in-app list renders it; not the instance of another user's.
+    /// With a scope, only the instances of subjects in the scope.</summary>
+    [Theory, InlineData(null, false), InlineData(null, true), InlineData("[Title] = 'Desk'", false), InlineData("[Title] = 'Desk'", true)]
+    public void A_user_addressed_notification_renders_for_a_requester_rows_role(string? scope, bool prefetch)
+    {
+        var name = $"req-{Guid.NewGuid():N}";
+        using (var os = db.NewObjectSpace())
+            Role(os, name, r => WorkflowPermissions.GrantRequesterRows(r, (typeof(PurchaseRequest), scope)));
+        Guid me;
+        using (var os = db.NewObjectSpace()) me = os.FirstOrDefault<ApplicationUser>(u => u.UserName == name)!.ID;
+        var (mine, theirs) = (Notified(buyerId: me), Notified());
+        var outOfScope = Notified(buyerId: me);
+        Change(outOfScope, pr => pr.Title = "Lamp");   // the subject leaves the scope (unscoped: still readable)
+
+        using var provider = LogOn(name, out var security, prefetch);
+        using var secured = provider.CreateObjectSpace();
+        var listed = secured.GetObjects<WorkflowNotification>().ToDictionary(x => x.ID);   // the list's query
+        Assert.NotNull(listed[mine].Instance);
+        Assert.DoesNotContain(theirs, listed.Keys);
+        var note = secured.GetObjectByKey<WorkflowNotification>(mine);
+        Assert.NotNull(note.Instance);
+        Assert.Equal($"T=Desk A=12.00 B={M} U={M}", WorkflowNotifications.Render(note, secured, security));   // no read on users
+        Assert.Null(secured.GetObjectByKey<WorkflowNotification>(theirs));
+        using var os2 = db.NewObjectSpace();
+        Assert.Null(secured.GetObjectByKey<WorkflowInstance>(os2.GetObjectByKey<WorkflowNotification>(theirs).Instance!.ID));
+        var outside = secured.GetObjectByKey<WorkflowInstance>(os2.GetObjectByKey<WorkflowNotification>(outOfScope).Instance!.ID);
+        Assert.Equal(scope == null, outside != null);
+    }
+
+    /// <summary>CARD-2871: the assignee rows read the instance of a task assigned to the user (<c>@Buyer</c>), not another's.</summary>
+    [Theory, InlineData(null, false), InlineData(null, true), InlineData("[Title] = 'Desk'", false), InlineData("[Title] = 'Desk'", true)]
+    public void A_user_assigned_task_shows_its_instance_for_an_assignee_rows_role(string? scope, bool prefetch)
+    {
+        var name = $"asg-{Guid.NewGuid():N}";
+        using (var os = db.NewObjectSpace())
+            Role(os, name, r => WorkflowPermissions.GrantAssigneeRows(r, (typeof(PurchaseRequest), scope)));
+        var def = new WorkflowDef($"nt-{Guid.NewGuid():N}", 1, "review",
+            [new("review", "Review", StateKind.Task, TaskRole: "@Buyer"), new("done", "Done", StateKind.Final)],
+            [new("review", "Approve", "done")]);
+        using (var os = db.NewObjectSpace())
+        {
+            var d = DefinitionMapper.ToDraft(os, def, typeof(PurchaseRequest).FullName!);
+            os.CommitChanges();
+            var published = new DefinitionService(new DefinitionStore()).Publish(os, d, "tester", WorkflowRoleCatalog.Names(os));
+            Assert.True(published.Ok, string.Join("; ", published.Messages));
+        }
+        Guid Task(string userName, string title = "Desk")
+        {
+            using var os = db.NewObjectSpace();
+            var pr = os.CreateObject<PurchaseRequest>();
+            (pr.Title, pr.Buyer) = (title, os.FirstOrDefault<ApplicationUser>(u => u.UserName == userName));
+            os.CommitChanges();
+            Assert.True(rt.Start(new WorkflowCaller("starter", _ => true, db.NewObjectSpace(), db.NewObjectSpace), typeof(PurchaseRequest), pr.ID, def.Name).Ok);
+            using var check = db.NewObjectSpace();
+            return check.GetObjectsQuery<WorkflowTask>().Single(t => t.Instance!.SubjectId == pr.ID).ID;
+        }
+        var (mine, theirs, outOfScope) = (Task(name), Task("mail-buyer"), Task(name, "Lamp"));
+
+        using var provider = LogOn(name, out _, prefetch);
+        using var secured = provider.CreateObjectSpace();
+        var listed = secured.GetObjects<WorkflowTask>().ToDictionary(x => x.ID);   // the list's query
+        Assert.NotNull(listed[mine].Instance);
+        Assert.DoesNotContain(theirs, listed.Keys);
+        Assert.NotNull(secured.GetObjectByKey<WorkflowTask>(mine).Instance);
+        using var os2 = db.NewObjectSpace();
+        Assert.Null(secured.GetObjectByKey<WorkflowInstance>(os2.GetObjectByKey<WorkflowTask>(theirs).Instance!.ID));
+        var outside = secured.GetObjectByKey<WorkflowInstance>(os2.GetObjectByKey<WorkflowTask>(outOfScope).Instance!.ID);
+        Assert.Equal(scope == null, outside != null);   // a Lamp request is outside the scope
+    }
 }
