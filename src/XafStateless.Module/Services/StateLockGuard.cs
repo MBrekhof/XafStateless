@@ -85,7 +85,7 @@ public sealed class StateLockGuard : SaveChangesInterceptor
 
         foreach (var e in subjects)
         {
-            var link = (e.Reference(Link).CurrentValue as BaseObject)?.ID ?? (Guid?)e.Property(ForeignKey(e.Metadata)).CurrentValue;
+            var link = RawSql.CurrentKey(e, Link, ForeignKey(e.Metadata));
             var stored = e.State == EntityState.Added ? null : persistedLink.GetValueOrDefault(Key(e));
             if (scope == null && link != stored) throw new UserFriendlyException(LinkManaged);
         }

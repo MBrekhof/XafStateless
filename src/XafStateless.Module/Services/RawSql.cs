@@ -99,4 +99,14 @@ internal static class RawSql
     /// <summary>The foreign-key property behind <typeparamref name="T"/>'s reference <paramref name="navigation"/>.</summary>
     public static string ForeignKey<T>(DbContext ctx, string navigation) =>
         ctx.Model.FindEntityType(typeof(T))!.FindNavigation(navigation)!.ForeignKey.Properties[0].Name;
+
+    /// <summary>The key a save writes for reference <paramref name="navigation"/> (foreign key <paramref name="fk"/>): the
+    /// foreign key when it is modified (EF writes the property; a detached principal leaves the navigation behind: CARD-2812),
+    /// else the navigation's record when the context still tracks it (set without DetectChanges), else the foreign key. A new
+    /// row's properties never count as modified, so the detached check is what keeps an Added row honest.</summary>
+    public static Guid? CurrentKey(Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry e, string navigation, string fk) =>
+        e.Property(fk).IsModified
+            ? (Guid?)e.Property(fk).CurrentValue
+            : (e.Reference(navigation).CurrentValue is DevExpress.Persistent.BaseImpl.EF.BaseObject b && e.Context.Entry(b).State != EntityState.Detached
+                ? b.ID : (Guid?)null) ?? (Guid?)e.Property(fk).CurrentValue;
 }

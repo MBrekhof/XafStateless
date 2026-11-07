@@ -245,7 +245,7 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         {
             if (!rows.TryGetValue(e.Entity.ID, out var row)) throw new UserFriendlyException("Workflow notification: the notification does not exist.");
             object? Now(string column) => column == fk
-                ? (e.Reference(nameof(WorkflowNotification.Instance)).CurrentValue as BaseObject)?.ID ?? (Guid?)e.Property(fk).CurrentValue
+                ? RawSql.CurrentKey(e, nameof(WorkflowNotification.Instance), fk)
                 : e.Property(column).CurrentValue;
             bool Written(string column) => column == fk
                 ? e.Reference(nameof(WorkflowNotification.Instance)).IsModified || e.Property(fk).IsModified
@@ -283,7 +283,7 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
         {
             if (!rows.TryGetValue(e.Entity.ID, out var row)) throw RefuseTask("the task does not exist.");
             object? Now(string column) => column == fk
-                ? (e.Reference(nameof(WorkflowTask.Instance)).CurrentValue as BaseObject)?.ID ?? (Guid?)e.Property(fk).CurrentValue
+                ? RawSql.CurrentKey(e, nameof(WorkflowTask.Instance), fk)
                 : e.Property(column).CurrentValue;
             for (var i = 0; i < fixedColumns.Length; i++)
                 if (!Same(Now(fixedColumns[i]), row[1 + i]))
@@ -305,8 +305,8 @@ public sealed class DefinitionGuard : SaveChangesInterceptor
     /// <summary>An Added row's current parent; otherwise the parent as stored. Re-parenting is refused.</summary>
     static Guid? Parent<T>(EntityEntry<T> e, string navigation, Dictionary<Guid, Guid?> persisted) where T : BaseObject
     {
-        var fk = e.Property(((Microsoft.EntityFrameworkCore.Metadata.INavigation)e.Reference(navigation).Metadata).ForeignKey.Properties[0].Name);
-        var current = (Guid?)fk.CurrentValue ?? (e.Reference(navigation).CurrentValue as BaseObject)?.ID;
+        var fk = ((Microsoft.EntityFrameworkCore.Metadata.INavigation)e.Reference(navigation).Metadata).ForeignKey.Properties[0].Name;
+        var current = RawSql.CurrentKey(e, navigation, fk);   // the key the save writes (CARD-2812)
         if (e.State == EntityState.Added) return current;
         if (!persisted.TryGetValue(e.Entity.ID, out var stored)) throw Refuse("the row being changed does not exist.");
         if (e.State == EntityState.Modified && current != stored)
