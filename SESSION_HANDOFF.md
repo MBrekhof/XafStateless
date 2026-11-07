@@ -1,5 +1,24 @@
 # Session handoff — 2026-11-07
 
+## Card loop (2026-11-07): CARD-2811, 2809, 2909, 2812; XSM-029 parked; CARD-2908 decided
+
+Run alongside the CARD-2895 session, from a worktree branch (`cards-2026-11-07`) fast-forwarded into master per card.
+Every card: test first, Gemini diff review, mutations. **None released** (next release after 0.5.0 needs Martin's go).
+- `cbfa590` CARD-2811: `SnapshotWalkTests` on test-only entities (`TestSubjectsDbContext` now backs an XAF provider; a
+  protected `DemoEFCoreDbContext(DbContextOptions)` ctor). **Bug found:** a record whose default member loops back to
+  itself overflowed the stack (`BaseObject.ToString`), killing the host at notify/render/Run time; `Walk` now stops.
+- `c661318` CARD-2809: a snapshot never stores a temporary (IDENTITY) key; such placeholders stay Live.
+- `89aed8f` CARD-2909 (security): placeholders follow the Set field expression rule: no hidden (`[Browsable(false)]`)
+  member and no user secret, judged per hop on receiver and declaring type (`WorkflowMembers.IsUnreadable`/
+  `FirstUnreadable`, also used by `Paths`). Refused at publish, empty at runtime and in rows snapshotted on 0.5.0.
+  **Behaviour change for hosts (BPG):** a template on a hidden member is refused on republish; use
+  `VisibleIn*View(false)` instead (demo `Summary` changed; new hidden demo `SortKey` for tests).
+- `ffa3074` CARD-2812: guards judge a reference by the key the save writes (`RawSql.CurrentKey`).
+- CARD-2908: decided **a** by Claude under Martin's loop mandate ("decide yourself or park"), not by Martin: keep as
+  documented. XSM-029 moved to Backlog (parked since 2026-09-27).
+- Tests: Engine 59, Module 340. No E2E run (no UI change; the demo seed only uses `{Title}`).
+- Board: Todo empty. Backlog: XSM-030, XSM-029, CARD-2767.
+
 ## This session (2026-11-06/07): a Set field takes an expression (CARD-2895, for BPG CARD-2816/2817)
 
 - `b18c388`: a SetField Value starting with `=` is XAF criteria evaluated on the subject in the runtime's command space
