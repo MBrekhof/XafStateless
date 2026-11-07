@@ -1,5 +1,16 @@
 # Session handoff — 2026-11-07
 
+## 0.6.0 published (Martin's go, 2026-11-07)
+
+- Release commit `7acf07b` (`PackageVersion` 0.6.0): Engine, Module, Blazor on the private feed, packed and tested
+  (Engine 59, Module 340) in a clean worktree of that commit. Contents since 0.5.0: CARD-2895 (Set field expressions),
+  CARD-2909 (placeholders refuse hidden members and user secrets), CARD-2812, CARD-2809, CARD-2811.
+- A scratch restore of `XafStateless.Blazor` 0.6.0 resolves Module/Engine 0.6.0 and DevExpress 26.1.6. The restore's
+  vulnerability warnings (System.Security.Cryptography.Pkcs/Xml) come through DevExpress, as in earlier releases.
+- **For hosts (BPG):** a Set field constant starting with `=` is now an expression; a Notify/Run action template on a
+  `[Browsable(false)]` member is refused on republish (CARD-2909). No library schema change since 0.5.0. Next for BPG:
+  bump to 0.6.0 and map `"=..."` SetField values straight through (CARD-2816).
+
 ## Card loop (2026-11-07): CARD-2811, 2809, 2909, 2812; XSM-029 parked; CARD-2908 decided
 
 Run alongside the CARD-2895 session, from a worktree branch (`cards-2026-11-07`) fast-forwarded into master per card.
@@ -29,10 +40,9 @@ Every card: test first, Gemini diff review, mutations. **None released** (next r
   their underlying type and refuses NaN/infinities. Demo `PurchaseRequest.Approver` (demo schema only; no library schema
   change). **Compatibility:** a constant starting with `=` is now an expression (`='=x'` for the literal).
 - Gemini reviewed plan and diff; every finding settled in `docs/plans/2026-11-06-card-2895-setfield-expression.md`.
-  New cards: CARD-2908 (non-admin `GrantDesigner` roles can copy unreadable data through an expression; Martin decided
-  "keep as documented"), CARD-2909 (Notify/Run action placeholders can name user secrets; reuses `UserSecrets`).
-- **Not released.** 0.5.0 went out without it (`70a44f2`). The next release (0.6.0 suggested: the `=` constant change)
-  waits for Martin's go; BPG then maps `"=..."` straight through.
+  New cards: CARD-2908 (non-admin `GrantDesigner` roles can copy unreadable data through an expression; decided "keep as
+  documented" by the card loop), CARD-2909 (Notify/Run action placeholders can name user secrets; fixed by the loop).
+- Released in 0.6.0 (above); 0.5.0 (`70a44f2`) went out without it.
 - Tests: Engine 59, Module 324 on master with CARD-2809/2811; 10 mutants killed. No E2E run (no UI change beyond the
   Target lookup listing references).
 
