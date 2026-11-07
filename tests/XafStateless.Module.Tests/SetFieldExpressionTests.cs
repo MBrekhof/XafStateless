@@ -71,7 +71,7 @@ public class SetFieldExpressionTests : IClassFixture<TestDb>
     [InlineData("Amount", "=Iif([Ordered], [Amount], 0)", "not a valid expression")]   // the converter is stricter than the evaluator (documented)
     [InlineData("Approver", "=[buyer]", "'buyer' is not a member")]   // XAF's evaluator is case-sensitive
     [InlineData("Title", "=ToStr([ObjectSpace])", "'ObjectSpace' is not a member")]   // a CLR property XAF does not know
-    [InlineData("Title", "=[Summary]", "'Summary' of PurchaseRequest cannot be read")]   // hidden (non-browsable)
+    [InlineData("Title", "=[SortKey]", "'SortKey' of PurchaseRequest cannot be read")]   // hidden (non-browsable)
     [InlineData("Title", "=[Buyer.ChangePasswordOnFirstLogon]", "'ChangePasswordOnFirstLogon'")]
     [InlineData("Revisions", "=[Buyer.Roles][].Count()", "'Roles'")]
     [InlineData("Revisions", "=[Buyer.UserLogins][].Count()", "'UserLogins'")]

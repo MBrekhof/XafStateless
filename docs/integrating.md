@@ -424,7 +424,13 @@ A Notify effect writes a `WorkflowNotification` row (the outbox), in the same co
   - `UserId` (with `UserName` as a display snapshot): a single user, for a Notify addressed to `@requester` or to a
     user member (`@Buyer`);
 - `Body`: the Notify text as written, with its `{Member}` or `{Reference.Member}` placeholders **not** filled in
-  (`IsTemplate` = true; since 0.4.0). The host fills it per recipient (below);
+  (`IsTemplate` = true; since 0.4.0). The host fills it per recipient (below). A placeholder (in a Notify or a Run
+  action's argument) follows the rule of a Set field expression: no hidden (`[Browsable(false)]`) member and no user's
+  secret (`StoredPassword`, `ChangePasswordOnFirstLogon`, `AccessFailedCount`, `LockoutEnd`, `Roles`, `UserLogins`) on its
+  way. XAF's type-level Read covers a hidden member, and no member permission can be set on one in the UI, so the
+  recipient's permissions would not stop it. `{Buyer.StoredPassword}` is refused at publish; a definition published before
+  renders it empty (CARD-2909, after 0.5.0). To keep a member out of the views but usable in a template, hide it with
+  `VisibleInListView/DetailView/LookupListView(false)` instead of `[Browsable(false)]`;
 - `State` = `Pending`, plus `Attempts`, `LastError` and `CreatedUtc`.
 
 **The requester.** The Target lookup of a Notify effect offers `@requester` first: the user who started the workflow.

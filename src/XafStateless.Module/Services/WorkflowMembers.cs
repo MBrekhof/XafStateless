@@ -46,6 +46,28 @@ public static class WorkflowMembers
                 typeof(DevExpress.Persistent.Base.Security.IAuthenticationStandardUser), typeof(DevExpress.Persistent.Base.IPermissionPolicyUser) }
             .Any(i => i.IsAssignableFrom(t));
 
+    /// <summary>True when <paramref name="member"/>, read on <paramref name="owner"/>, is one of a user's <see cref="UserSecrets"/>.</summary>
+    public static bool IsSecret(Type owner, string member) => IsUserType(owner) && UserSecrets.Contains(member);
+
+    /// <summary>A member a workflow may not read (CARD-2895 expressions, CARD-2909 placeholders): hidden ([Browsable(false)]:
+    /// XAF's type-level Read still allows it, and no member permission can be set on it in the UI), or a user's secret, judged
+    /// on the type it is read on (<paramref name="receiver"/>) and on the type declaring it.</summary>
+    public static bool IsUnreadable(IMemberInfo member, Type receiver) =>
+        !member.IsVisible || IsSecret(receiver, member.Name) || IsSecret(member.Owner.Type, member.Name);
+
+    /// <summary>The first hop of <paramref name="path"/> (a member path found on <paramref name="from"/>) a workflow may not
+    /// read (<see cref="IsUnreadable"/>), each hop judged on the type it is read on; null when every hop is fine.</summary>
+    public static IMemberInfo? FirstUnreadable(ITypeInfo from, IMemberInfo path)
+    {
+        var receiver = from;
+        foreach (var hop in path.GetPath())
+        {
+            if (IsUnreadable(hop, receiver.Type)) return hop;
+            receiver = hop.MemberTypeInfo;
+        }
+        return null;
+    }
+
     static bool IsScalar(Type t)
     {
         t = Nullable.GetUnderlyingType(t) ?? t;

@@ -31,6 +31,30 @@ public class OtherSubject : BaseObject, IWorkflowSubject
     public virtual Node? Node { get; set; }
     public virtual int? TicketId { get; set; }
     [ForeignKey(nameof(TicketId))] public virtual Ticket? Ticket { get; set; }
+    public virtual Agent? Agent { get; set; }
+    public virtual Vault? Vault { get; set; }
+}
+
+/// <summary>Shown as a hidden member (CARD-2909): {Vault} must not show it.</summary>
+[DefaultProperty(nameof(Secret))]
+public class Vault : BaseObject
+{
+    [Browsable(false)] public virtual string Secret { get; set; } = "";
+}
+
+/// <summary>A base class that is no user but declares a user's secret (CARD-2909): XAF reports it as the member's owner.</summary>
+public abstract class AccountBase : BaseObject
+{
+    public virtual string StoredPassword { get; set; } = "";
+}
+
+/// <summary>A user class shown as its own secret, declared on a non-user base (CARD-2909): {Agent} and
+/// {Agent.StoredPassword} must not show it.</summary>
+[DefaultProperty(nameof(StoredPassword))]
+public class Agent : AccountBase, DevExpress.ExpressApp.Security.ISecurityUser
+{
+    public virtual string UserName { get; set; } = "";
+    public virtual bool IsActive { get; set; } = true;
 }
 
 /// <summary>A record with a store-generated (IDENTITY) key: unsaved, it has only a temporary key (CARD-2809).</summary>
@@ -55,6 +79,8 @@ public class Desk : BaseObject
 {
     public virtual string Code { get; set; } = "";
     public virtual ApplicationUser? Owner { get; set; }
+    /// <summary>Hidden: a placeholder may not read it (CARD-2909).</summary>
+    [Browsable(false)] public virtual string ApiKey { get; set; } = "";
 }
 
 /// <summary>No declared default member: XAF falls back to the key, so it shows as its ID.</summary>
@@ -80,6 +106,8 @@ public class TestSubjectsDbContext(DbContextOptions<TestSubjectsDbContext> optio
     public DbSet<Bare> Bares { get; set; }
     public DbSet<Node> Nodes { get; set; }
     public DbSet<Ticket> Tickets { get; set; }
+    public DbSet<Agent> Agents { get; set; }
+    public DbSet<Vault> Vaults { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

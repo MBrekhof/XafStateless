@@ -62,6 +62,8 @@ public static class WorkflowNotifications
         return placeholders.Replace(note.Body, m =>
         {
             var name = m.Groups[1].Value;
+            // A path a workflow may not read (CARD-2909): empty, also for a row snapshotted before the rule.
+            if (type!.FindMember(name) is { } path && WorkflowMembers.FirstUnreadable(type, path) != null) return "";
             if (snapshot != null)
             {
                 if (!snapshot.TryGetValue(name, out var e)) return Masked;
@@ -121,10 +123,14 @@ public static class WorkflowNotifications
     {
         var (reads, judged) = (new List<(object, string?)>(), true);
         if (type.FindMember(path) is not { } member) return ("", reads, true);
+        // A hidden member or a user's secret (CARD-2909): refused at publish; a template published before shows nothing and
+        // stores nothing. Judged on the declared path first (nothing read yet), then on each record's own type.
+        if (WorkflowMembers.FirstUnreadable(type, member) != null) return ("", [], false);
         object? value = subject;
         foreach (var hop in member.GetPath())
         {
             if (value == null || !hop.Owner.Type.IsInstanceOfType(value)) return ("", reads, judged);
+            if (WorkflowMembers.IsSecret(value.GetType(), hop.Name)) return ("", [], false);
             if (types.FindTypeInfo(value.GetType()) is { IsPersistent: true })
             {
                 reads.Add((value, hop.Name));
@@ -142,6 +148,8 @@ public static class WorkflowNotifications
                 if (target.DefaultMember != null) value = null;   // a loop: BaseObject.ToString would follow it into a stack overflow
                 break;
             }
+            if ((!shown.IsVisible && !shown.IsKey) || WorkflowMembers.IsSecret(target.Type, shown.Name) || WorkflowMembers.IsSecret(shown.Owner.Type, shown.Name))
+                return ("", [], false);   // shown as a hidden member or a user's secret (XAF's key fallback stays allowed)
             reads.Add((value, shown.Name));
             judged &= shown.IsPersistent && !shown.IsList;
             value = shown.GetValue(value);

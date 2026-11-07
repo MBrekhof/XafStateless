@@ -129,7 +129,7 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
             {
                 if (hop.StartsWith('^') || hop.Contains('<')) return $"'{path}': '^.' and type casts are not supported";
                 if (type?.FindMember(hop) is not { } m) return $"'{hop}' is not a member of {type?.Name}";
-                if (!m.IsVisible || (WorkflowMembers.IsUserType(type.Type) && WorkflowMembers.UserSecrets.Contains(hop)))
+                if (WorkflowMembers.IsUnreadable(m, type.Type))
                     return $"'{hop}' of {type.Name} cannot be read by a workflow";
                 (last, type) = (m, m.MemberTypeInfo);
             }
@@ -137,12 +137,23 @@ public sealed partial class XafWorkflowEnvironment(IReadOnlyList<string> roleNam
         }
     }
 
-    /// <summary>The first {Placeholder} of <paramref name="template"/> that is not a member of the subject, as a finding; null when all are.</summary>
+    /// <summary>The first {Placeholder} of <paramref name="template"/> that is not a member of the subject, or reads a hidden
+    /// member or a user's secret on the way (CARD-2909: the rule <see cref="Paths"/> applies to an expression), as a finding;
+    /// null when all are fine.</summary>
     string? BadPlaceholder(string template)
     {
-        var bad = Placeholder().Matches(template).Select(m => m.Groups[1].Value).FirstOrDefault(n => target.FindMember(n) == null);
-        return bad == null ? null : $"placeholder '{{{bad}}}' is not a member of {target.Name}";
+        foreach (var name in Placeholder().Matches(template).Select(m => m.Groups[1].Value))
+        {
+            if (target.FindMember(name) is not { } member) return $"placeholder '{{{name}}}' is not a member of {target.Name}";
+            if (WorkflowMembers.FirstUnreadable(target, member) is { } hop)
+                return $"placeholder '{{{name}}}': '{hop.Name}' of {ReceiverOf(target, member, hop).Name} cannot be read by a workflow";
+        }
+        return null;
     }
+
+    /// <summary>The type <paramref name="hop"/> is read on, along <paramref name="path"/> from <paramref name="from"/>.</summary>
+    static ITypeInfo ReceiverOf(ITypeInfo from, IMemberInfo path, IMemberInfo hop) =>
+        path.GetPath().TakeWhile(h => h != hop).Aggregate(from, (_, h) => h.MemberTypeInfo);
 
     /// <summary>A lock (the validator's only use): a scalar or a reference (<see cref="WorkflowMembers.Lockable"/>).</summary>
     public string? CheckMember(string member) =>

@@ -22,6 +22,9 @@ public class PurchaseRequest : BaseObject, IWorkflowSubject
     public virtual ApplicationUser? Approver { get; set; }
     public virtual WorkflowInstance? Workflow { get; set; }
     /// <summary>A calculated member: a Notify placeholder on it is filled when the notification is shown, from what the
-    /// viewer's space holds (its getter's reads are invisible to a permission check, so no snapshot; CARD-2788).</summary>
-    [NotMapped, Browsable(false)] public string Summary => $"{Title} ({Amount.ToString(CultureInfo.InvariantCulture)})";
+    /// viewer's space holds (its getter's reads are invisible to a permission check, so no snapshot; CARD-2788). Kept out of
+    /// the views, but browsable: a placeholder may not read a hidden ([Browsable(false)]) member (CARD-2909).</summary>
+    [NotMapped, VisibleInListView(false), VisibleInDetailView(false), VisibleInLookupListView(false)] public string Summary => $"{Title} ({Amount.ToString(CultureInfo.InvariantCulture)})";
+    /// <summary>A hidden member: no Set field expression or placeholder may read it (CARD-2895, CARD-2909); the tests use it.</summary>
+    [NotMapped, Browsable(false)] public string SortKey => Title.ToUpperInvariant();
 }

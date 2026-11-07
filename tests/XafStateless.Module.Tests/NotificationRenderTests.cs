@@ -277,6 +277,27 @@ public class NotificationRenderTests : IClassFixture<TestDb>
         Assert.StartsWith("T=Desk ", Unsecured(id));
     }
 
+    /// <summary>CARD-2909: a row written before placeholders were checked, whose snapshot holds a secret as judged text, renders
+    /// it empty for everyone (the rule is applied to the path at render time too).</summary>
+    [Fact] public void A_secret_snapshotted_before_the_rule_renders_empty()
+    {
+        var id = Notified("T={Title}");
+        using (var ctx = db.NewDbContext())
+        {
+            var table = ctx.Model.FindEntityType(typeof(WorkflowNotification))!.GetTableName();
+            using var conn = new SqlConnection(db.ConnectionString);
+            conn.Open();
+            using var cmd = conn.CreateCommand();   // outside EF: the guard keeps Body fixed
+            cmd.CommandText = $"UPDATE [{table}] SET [Body] = @b WHERE [ID] = @id";
+            cmd.Parameters.AddWithValue("@b", "T={Title} P={Buyer.StoredPassword}");
+            cmd.Parameters.AddWithValue("@id", id);
+            Assert.Equal(1, cmd.ExecuteNonQuery());
+        }
+        SetSnapshot(id, """{"Title":{"Text":"Desk","Reads":[]},"Buyer.StoredPassword":{"Text":"hash-from-0.5.0","Reads":[]}}""");
+        Assert.Equal("T=Desk P=", Unsecured(id));
+        Assert.Equal("T=Desk P=", RenderFor(id, "UserReaders"));
+    }
+
     [Fact] public void A_row_without_snapshot_renders_live()
     {
         var id = Notified();
@@ -376,25 +397,21 @@ public class NotificationRenderTests : IClassFixture<TestDb>
         Assert.Equal($"T={M} A={M} B={M} U={M}", WorkflowNotifications.Render(outbox.GetObjectByKey<WorkflowNotification>(id), outbox, security));
     }
 
-    /// <summary>A count over a collection includes rows the recipient's criteria hide: not snapshotted, counted at render time.</summary>
+    /// <summary>A count over a collection includes rows the recipient's criteria hide: not snapshotted (stored Live, empty),
+    /// counted at render time. (It used {Buyer.Roles.Count} until CARD-2909 made a user's roles a secret.)</summary>
     [Fact] public void A_collection_count_is_filled_at_render_time()
     {
-        Guid owner;
-        using (var os = db.NewObjectSpace())
-        {
-            var u = os.CreateObject<ApplicationUser>();
-            (u.UserName, u.IsActive) = ($"roles-{Guid.NewGuid():N}", true);
-            os.CommitChanges();
-            owner = u.ID;
-        }
-        var id = Notified("R={Buyer.Roles.Count}", buyerId: owner);
-        Assert.Equal("R=0", Unsecured(id));
-        using (var os = db.NewObjectSpace())
-        {
-            os.GetObjectByKey<ApplicationUser>(owner).Roles.Add(os.FirstOrDefault<PermissionPolicyRole>(r => r.Name == "UserReaders")!);
-            os.CommitChanges();
-        }
-        Assert.Equal("R=1", Unsecured(id));
+        var id = Notified("R={Workflow.Definition.States.Count}");
+        Assert.Equal("R=2", Unsecured(id));
+        using var ctx = db.NewDbContext();
+        var table = ctx.Model.FindEntityType(typeof(WorkflowNotification))!.GetTableName();
+        using var conn = new SqlConnection(db.ConnectionString);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT [{WorkflowNotifications.SnapshotColumn}] FROM [{table}] WHERE [ID] = @id";
+        cmd.Parameters.AddWithValue("@id", id);
+        var entry = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, WorkflowNotifications.Entry>>((string)cmd.ExecuteScalar()!)!["Workflow.Definition.States.Count"];
+        Assert.Equal((true, "", 0), (entry.Live, entry.Text, entry.Reads.Count));
     }
 
     [Fact] public void An_unknown_subject_type_masks_every_placeholder()
