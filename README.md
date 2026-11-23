@@ -158,3 +158,7 @@ See **[docs/integrating.md](docs/integrating.md)**. It covers:
 - role seeding and subject classes;
 - the timer and notification delivery;
 - the limits.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
